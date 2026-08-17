@@ -17,6 +17,7 @@
     "postcss": "latest",
     "react": "latest",
     "react-dom": "latest",
+    "react-select": "^5.10.2",
     "tailwindcss": "latest",
     "vite": "latest",
     "wait-on": "latest"
@@ -28,8 +29,18 @@
   "build": {
     "appId": "local.pulse.gitai",
     "productName": "Pulse Git AI",
-    "directories": { "output": "release" },
-    "files": ["dist/**/*", "electron/**/*", "package.json"],
-    "win": { "target": ["nsis"] }
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    }
   }
 }
