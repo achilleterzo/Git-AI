@@ -29,13 +29,28 @@ aside { border-color:#30343a; background:#1b1e21 }
 .project-select__single-value { color:#e5e7eb !important }.project-select__placeholder { color:#aeb5bd !important }.project-select__input-container { color:#e5e7eb !important }
 .project-select__menu,.project-select__menu-list,.project-select__option { color:#f3f4f6 !important; background:#24272a !important }.project-select__option--is-focused { background:#343a3f !important }.project-select__option { cursor:pointer !important }
 .commit-button { color:#d9fdf5; border:1px solid #41645f }
-.folder-button { width:38px; height:34px; flex:0 0 38px; padding:0; border-right:1px solid #3b4147; border-radius:0; background:transparent; color:#d7dde2; display:grid; place-items:center }.folder-button svg { width:22px; height:22px; fill:currentColor }.folder-button:hover { color:#5eead4; background:#30353a }
+.folder-button { order:2; width:38px; height:34px; flex:0 0 38px; padding:0; border-left:1px solid #3b4147; border-right:0; border-radius:0; background:transparent; color:#d7dde2; display:grid; place-items:center }.folder-button svg { display:none }.folder-button::after { content:'↗'; font-size:22px; line-height:1; font-weight:500 }.folder-button:hover { color:#5eead4; background:#30353a }
+.project-react-select { order:1 }
 .project-icon { width:38px; height:38px; flex:0 0 38px; object-fit:contain; border:1px solid #373b41; border-radius:8px; background:#202326; padding:4px }
 .push-cta { margin-top:18px; padding:10px 16px; background:#5eead4; color:#10201f; font-size:12px; box-shadow:0 6px 18px #5eead433 }.push-cta:hover:not(:disabled) { background:#8af5e2 }.push-cta:disabled { opacity:.5; cursor:not-allowed }
 .error-modal pre { max-height:320px; overflow:auto; white-space:pre-wrap; word-break:break-word; margin:18px 0 0; padding:12px; border-radius:7px; background:#17191c; color:#ffb4bd; font:12px/1.5 ui-monospace,monospace }
 .tree-row.diffable { cursor:zoom-in }.diff-modal { width:min(900px, calc(100vw - 40px)) }.diff-modal pre { max-height:60vh; overflow:auto; white-space:pre; margin:18px 0 0; padding:16px; border-radius:8px; background:#17191c; color:#d1d5db; font:12px/1.5 ui-monospace,monospace }
 .loading-backdrop { position:fixed; inset:0; z-index:50; display:grid; place-items:center; background:rgba(8,10,12,.68); backdrop-filter:blur(5px) }.loader-card { display:flex; align-items:center; gap:14px; padding:18px 22px; border:1px solid #454b51; border-radius:12px; background:#24272a; color:#e5e7eb; box-shadow:0 20px 60px #0008; font-size:13px }.spinner { width:22px; height:22px; border:3px solid #4c555d; border-top-color:#5eead4; border-radius:50%; animation:pulse-spin .8s linear infinite }@keyframes pulse-spin { to { transform:rotate(360deg) } }
 .nav { cursor:pointer }.stash-view { display:flex; flex-direction:column; gap:12px }.stash-heading { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px }.stash-card { border:1px solid #373b41; border-radius:10px; background:#202326; padding:16px 18px }.stash-card-head { display:flex; justify-content:space-between; gap:16px; color:#e5e7eb }.stash-card-head span { color:#8f98a2; font-size:11px }.stash-card p { color:#aeb5bd; font-size:12px; margin:8px 0 14px }.stash-files { border-top:1px solid #373b41; padding-top:10px; color:#c5cbd1; font:12px/1.7 ui-monospace,monospace }
+.monitor-label { margin-top:24px }
+.home-projects { display:flex; flex-direction:column; gap:3px; max-height:240px; overflow:auto }
+.home-project { width:100%; min-width:0; display:flex; align-items:center; gap:9px; padding:9px 10px; border-radius:8px; background:transparent; color:#9da4ad; text-align:left; font-size:11px; font-weight:500 }
+.home-project img { width:18px; height:18px; flex:0 0 18px; object-fit:contain }
+.home-project span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+.home-project:hover,.home-project.active { color:#f3f4f6; background:#2a2e33 }
+.home-project.active { box-shadow:inset 2px 0 #5eead4 }
+.home-empty { padding:8px 10px; color:#68717b; font-size:11px }
+.home-project-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:10px; margin-top:30px; padding-bottom:24px }
+.home-project-card { min-height:108px; display:flex; flex-direction:column; align-items:flex-start; gap:7px; padding:15px; border:1px solid #373b41; border-radius:9px; background:#202326; color:#e5e7eb; text-align:left; overflow:hidden }
+.home-project-card img { width:26px; height:26px; object-fit:contain }
+.home-project-card span { width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px }
+.home-project-card small { color:#8f98a2; font-size:11px; font-weight:500 }
+.home-project-card:hover,.home-project-card.active { border-color:#5eead4; background:#272c30 }
 .stash-path { border:1px solid #373b41; border-radius:8px; background:#202326; color:#e5e7eb; padding:11px 14px; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
 .stash-pending { border:1px solid #373b41; border-radius:10px; overflow:hidden; background:#202326 }.stash-section-title { display:flex; justify-content:space-between; padding:15px 18px; color:#e5e7eb }.stash-section-title span { color:#9da5ae; font-size:12px }
 .head-selection { display:flex; align-items:center; gap:8px }

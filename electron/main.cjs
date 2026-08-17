@@ -89,6 +89,12 @@ function gitChanges(directory) {
     }))
   }))
 }
+function ensureGitRepository(directory) {
+  return new Promise((resolve, reject) => execFile('git', ['-C', directory, 'rev-parse', '--show-toplevel'], { windowsHide: true, timeout: 5000, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
+    if (error) return reject(new Error('The selected directory is not a Git repository'))
+    resolve(stdout.trim())
+  }))
+}
 function gitPushPending(directory) {
   return new Promise(resolve => execFile('git', ['-C', directory, 'rev-list', '--count', '@{u}..HEAD'], { windowsHide: true, timeout: 10000 }, (error, stdout) => resolve(!error && Number.parseInt(stdout.trim(), 10) > 0)))
 }
@@ -157,6 +163,7 @@ function createWindow() {
   win.webContents.on('did-fail-load', (_, code, description) => console.error(`Renderer load failed (${code}): ${description}`))
 }
 async function startWatching(directory) {
+  await ensureGitRepository(directory)
   if (watcher) watcher.close()
   if (publishTimer) { clearTimeout(publishTimer); publishTimer = null }
   watchGeneration += 1
