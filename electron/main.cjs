@@ -161,7 +161,7 @@ ipcMain.handle('save-settings', (_, settings) => saveSettings(settings))
 ipcMain.handle('fetch-models', async (_, endpoint) => { const data = await requestJson(`${String(endpoint).replace(/\/$/, '')}/api/tags`); return (data.models || []).map(model => model.name).filter(Boolean) })
 ipcMain.handle('generate-commit-message', async (_, files) => {
   if (!currentDirectory) throw new Error('No directory selected')
-  if (!aiSettings?.endpoint || !aiSettings?.model) throw new Error('Configura endpoint e modello Ollama nelle impostazioni')
+  if (!aiSettings?.endpoint || !aiSettings?.model) throw new Error('Configure the Ollama endpoint and model in Settings')
   const selected = Array.isArray(files) ? files.filter(file => typeof file === 'string' && file && !file.includes('..')) : []
   if (!selected.length) throw new Error('Select at least one file')
   const diff = await new Promise((resolve, reject) => execFile('git', ['-C', currentDirectory, 'diff', '--', ...selected], { windowsHide: true, timeout: 30000, maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => error ? reject(new Error(stderr.trim() || error.message)) : resolve(stdout)))
@@ -175,7 +175,9 @@ OUTPUT RULES: Return one line only. No markdown, quotes, translation, explanatio
 DIFF:
 ${diff}`
   const result = await requestJson(`${aiSettings.endpoint}/api/generate`, { method: 'POST' }, { model: aiSettings.model, prompt, stream: false })
-  return String(result.response || '').trim().split(/\r?\n/)[0].replace(/^['"`]+|['"`]+$/g, '')
+  const message = String(result.response || '').trim().split(/\r?\n/)[0].replace(/^['"`]+|['"`]+$/g, '').trim()
+  if (!message) throw new Error('Ollama returned an empty commit message. Check the selected model and try again.')
+  return message
 })
 ipcMain.handle('commit-selected', async (_, { files, message }) => {
   if (!currentDirectory) throw new Error('No directory selected')

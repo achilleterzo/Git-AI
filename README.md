@@ -1,4 +1,4 @@
-# Pulse Directory Watcher
+# Pulse Git AI
 
 Pulse is an Electron desktop app for monitoring Git projects, selecting files to commit, and managing the Git workflow with Ollama.
 

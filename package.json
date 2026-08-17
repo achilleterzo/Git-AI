@@ -1,5 +1,5 @@
 {
-  "name": "directory-watch-electron",
+  "name": "pulse-git-ai",
   "version": "1.0.0",
   "private": true,
   "main": "electron/main.cjs",
@@ -26,8 +26,8 @@
     "electron-builder": "^26.15.3"
   },
   "build": {
-    "appId": "local.pulse.directorywatcher",
-    "productName": "Pulse Directory Watcher",
+    "appId": "local.pulse.gitai",
+    "productName": "Pulse Git AI",
     "directories": { "output": "release" },
     "files": ["dist/**/*", "electron/**/*", "package.json"],
     "win": { "target": ["nsis"] }
