@@ -9,6 +9,10 @@ contextBridge.exposeInMainWorld('directoryAPI', {
   saveSettings: (settings) => ipcRenderer.invoke('save-settings', settings),
   fetchModels: (endpoint) => ipcRenderer.invoke('fetch-models', endpoint),
   generateCommitMessage: (files) => ipcRenderer.invoke('generate-commit-message', files),
+  getDiff: (file) => ipcRenderer.invoke('get-diff', file),
+  getStashes: () => ipcRenderer.invoke('get-stashes'),
+  stashSelected: (files, message) => ipcRenderer.invoke('stash-selected', { files, message }),
+  openInExplorer: () => ipcRenderer.invoke('open-in-explorer'),
   commitSelected: (files, message) => ipcRenderer.invoke('commit-selected', { files, message }),
   refresh: () => ipcRenderer.invoke('refresh'),
   gitPull: () => ipcRenderer.invoke('git-pull'),
@@ -16,6 +20,6 @@ contextBridge.exposeInMainWorld('directoryAPI', {
   getProjects: () => ipcRenderer.invoke('get-projects'),
   addProject: (directory) => ipcRenderer.invoke('add-project', directory),
   removeProject: (directory) => ipcRenderer.invoke('remove-project', directory),
-  onOpenSettings: (callback) => ipcRenderer.on('open-settings', callback),
-  onUpdate: (callback) => ipcRenderer.on('directory-update', (_, data) => callback(data))
+  onOpenSettings: (callback) => { ipcRenderer.on('open-settings', callback) },
+  onUpdate: (callback) => { ipcRenderer.on('directory-update', (_, data) => callback(data)) }
 })

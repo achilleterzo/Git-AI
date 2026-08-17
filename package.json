@@ -4,9 +4,12 @@
   "private": true,
   "main": "electron/main.cjs",
   "scripts": {
-    "dev": "concurrently -k \"vite\" \"wait-on http://localhost:5173 && electron .\"",
+    "dev": "concurrently -k \"vite\" \"wait-on http://localhost:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .\"",
+    "lint": "node --check electron/main.cjs",
+    "test": "npm run build",
     "build": "vite build",
     "dist:desktop": "npm run build && electron-builder --win",
+    "build:desktop:ci": "npm run build && electron-builder",
     "start": "electron ."
   },
   "dependencies": {
@@ -23,6 +26,7 @@
     "wait-on": "latest"
   },
   "devDependencies": {
+    "cross-env": "^10.1.0",
     "electron": "latest",
     "electron-builder": "^26.15.3"
   },
@@ -35,12 +39,15 @@
     "files": [
       "dist/**/*",
       "electron/**/*",
+      "assets/**/*",
       "package.json"
     ],
+    "icon": "assets/pulse-git-ai.png",
     "win": {
       "target": [
         "nsis"
-      ]
+      ],
+      "icon": "assets/pulse-git-ai.png"
     }
   }
 }
