@@ -66,13 +66,17 @@ aside { border-color:#30343a; background:#1b1e21 }
 .new-project-card:hover { border-color:#5eead4; background:#202b2d }
 .new-project-icon { font-size:26px !important; line-height:1; color:#5eead4 }
 .project-modal { width:min(560px, calc(100vw - 40px)) }
-.project-path-input { display:flex; gap:8px }
-.project-path-input input { flex:1; min-width:0 }
+.project-path-input { display:flex; gap:0; align-items:stretch }
+.modal .project-path-input input { flex:1; min-width:0; margin-top:7px; border-radius:7px 0 0 7px }
+.project-path-input .ghost { height:38px; margin-top:7px; padding:0 14px; border:1px solid #454b51; border-left:0; border-radius:0 7px 7px 0; white-space:nowrap }
 .project-preview { display:flex; align-items:center; gap:12px; padding:12px; border:1px solid #373b41; border-radius:8px; background:#17191c }
 .project-preview img { width:40px; height:40px; object-fit:contain; flex:0 0 40px }
 .project-preview div { flex:1; min-width:0 }
 .project-preview strong,.project-preview small { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
 .project-preview small { color:#8f98a2; font-size:11px; margin-top:4px }
+.project-card { cursor:pointer }
+.project-edit-button { align-self:flex-end; margin-top:auto; padding:5px 9px; border:1px solid #4a5057; background:#292d31; color:#cbd1d7; font-size:10px }
+.project-edit-button:hover { border-color:#5eead4; color:#5eead4 }
 .stash-path { border:1px solid #373b41; border-radius:8px; background:#202326; color:#e5e7eb; padding:11px 14px; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
 .stash-pending { border:1px solid #373b41; border-radius:10px; overflow:hidden; background:#202326 }.stash-section-title { display:flex; justify-content:space-between; padding:15px 18px; color:#e5e7eb }.stash-section-title span { color:#9da5ae; font-size:12px }
 .head-selection { display:flex; align-items:center; gap:8px }

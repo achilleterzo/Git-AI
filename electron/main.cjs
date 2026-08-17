@@ -21,7 +21,7 @@ const PUBLISH_DEBOUNCE_MS = 200
 function windowStatePath() { return path.join(app.getPath('userData'), 'window-state.json') }
 function settingsPath() { return path.join(app.getPath('userData'), 'settings.json') }
 function projectsPath() { return path.join(app.getPath('userData'), 'projects.json') }
-function loadProjects() { try { return JSON.parse(fs.readFileSync(projectsPath(), 'utf8')).map(project => typeof project === 'string' ? { path: project, icon: findProjectIcon(project), lastOpened: 0 } : { lastOpened: 0, ...project }).filter(project => project?.path && fs.existsSync(project.path)) } catch { return [] } }
+function loadProjects() { try { return JSON.parse(fs.readFileSync(projectsPath(), 'utf8')).map(project => typeof project === 'string' ? { path: project, icon: findProjectIcon(project), lastOpened: 0 } : { lastOpened: 0, ...project }).filter(project => typeof project?.path === 'string' && project.path && fs.existsSync(project.path)) } catch { return [] } }
 function persistProjects() { fs.mkdirSync(app.getPath('userData'), { recursive: true }); fs.writeFileSync(projectsPath(), JSON.stringify(projects, null, 2)) }
 function loadSettings() {
   try { return { endpoint: 'http://localhost:11434', model: '', language: 'English', ...JSON.parse(fs.readFileSync(settingsPath(), 'utf8')) } } catch { return { endpoint: 'http://localhost:11434', model: '', language: 'English' } }
@@ -116,7 +116,7 @@ function readIconFile(filePath) {
     const data = fs.readFileSync(filePath)
     if (data.length > 2 * 1024 * 1024) return null
     const extension = path.extname(filePath).toLowerCase()
-    const mime = extension === '.ico' ? 'image/x-icon' : extension === '.webp' ? 'image/webp' : extension === '.jpg' || extension === '.jpeg' ? 'image/jpeg' : 'image/png'
+    const mime = extension === '.ico' ? 'image/x-icon' : extension === '.webp' ? 'image/webp' : extension === '.jpg' || extension === '.jpeg' ? 'image/jpeg' : extension === '.svg' ? 'image/svg+xml' : 'image/png'
     return `data:${mime};base64,${data.toString('base64')}`
   } catch { return null }
 }
@@ -134,7 +134,9 @@ async function publish(reason = 'refresh', generation = watchGeneration) {
     const scanError = results[0].status === 'rejected' ? `File scan: ${results[0].reason.message}` : null
     const gitError = results[1].status === 'rejected' ? `Git: ${results[1].reason.message}` : null
     if (directory === currentDirectory && generation === watchGeneration) {
-      win.webContents.send('directory-update', { directory, projectIcon: findProjectIcon(directory), files, changes, pushPending: results[2].status === 'fulfilled' && results[2].value, gitOk: results[1].status === 'fulfilled', reason, error: [scanError, gitError].filter(Boolean).join(' | ') || null, at: new Date().toISOString() })
+      const update = { directory, projectIcon: findProjectIcon(directory), files, changes, pushPending: results[2].status === 'fulfilled' && results[2].value, gitOk: results[1].status === 'fulfilled', reason, error: [scanError, gitError].filter(Boolean).join(' | ') || null, at: new Date().toISOString() }
+      win.webContents.send('directory-update', update)
+      return update
     }
   } catch (error) {
     if (directory === currentDirectory && generation === watchGeneration) win.webContents.send('directory-update', { error: error.message })
@@ -188,7 +190,7 @@ function openDirectory() { dialog.showOpenDialog(win, { properties: ['openDirect
 function buildMenu() { Menu.setApplicationMenu(Menu.buildFromTemplate([{ label: 'File', submenu: [{ label: 'Open directory…', accelerator: 'CmdOrCtrl+O', click: openDirectory }, { label: 'Refresh Git status', accelerator: 'CmdOrCtrl+R', click: () => publish('manual-refresh') }, { type: 'separator' }, { label: 'Settings…', click: () => win.webContents.send('open-settings') }, { type: 'separator' }, { role: 'quit' }] }, { label: 'View', submenu: [{ role: 'reload' }, { role: 'toggledevtools' }] }])) }
 
 ipcMain.handle('choose-directory', async () => (await dialog.showOpenDialog(win, { properties: ['openDirectory'] })).filePaths[0] || null)
-ipcMain.handle('choose-project-icon', async () => { const result = await dialog.showOpenDialog(win, { properties: ['openFile'], filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'ico'] }] }); return result.filePaths[0] ? readIconFile(result.filePaths[0]) : null })
+ipcMain.handle('choose-project-icon', async () => { const result = await dialog.showOpenDialog(win, { properties: ['openFile'], filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'ico', 'svg'] }] }); return result.filePaths[0] ? readIconFile(result.filePaths[0]) : null })
 ipcMain.handle('get-project-icon', (_, directory) => directory ? findProjectIcon(directory) : null)
 ipcMain.handle('start-watching', async (_, directory) => { await startWatching(directory); return { ok: true } })
 ipcMain.handle('git-changes', () => currentDirectory ? gitChanges(currentDirectory) : [])
@@ -262,7 +264,7 @@ ipcMain.handle('commit-selected', async (_, { files, message }) => {
   await new Promise((resolve, reject) => execFile('git', ['-C', currentDirectory, 'add', '--', ...selected], { windowsHide: true, timeout: 30000 }, (error, stdout, stderr) => error ? reject(new Error(stderr.trim() || error.message)) : resolve(stdout)))
   return new Promise((resolve, reject) => execFile('git', ['-C', currentDirectory, 'commit', '-m', commitMessage], { windowsHide: true, timeout: 30000 }, (error, stdout, stderr) => error ? reject(new Error(stderr.trim() || error.message)) : resolve(stdout.trim())))
 })
-ipcMain.handle('refresh', async () => { await publish('post-commit'); return { ok: true } })
+ipcMain.handle('refresh', async () => publish('post-commit'))
 async function runGitRemote(command) {
   if (!currentDirectory) throw new Error('No directory selected')
   return new Promise((resolve, reject) => execFile('git', ['-C', currentDirectory, command], { windowsHide: true, timeout: 120000, maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => error ? reject(new Error(stderr.trim() || stdout.trim() || error.message)) : resolve(stdout.trim() || `${command} completed`)))
@@ -271,6 +273,7 @@ ipcMain.handle('git-pull', async () => { const result = await runGitRemote('pull
 ipcMain.handle('git-push', async () => { const result = await runGitRemote('push'); await publish('git-push'); return result })
 ipcMain.handle('get-projects', () => projects)
 ipcMain.handle('add-project', (_, project) => { const directory = typeof project === 'string' ? project : project?.path; if (!directory) return projects; const metadata = typeof project === 'string' ? {} : project; const existing = projects.find(item => item.path === directory); if (existing) Object.assign(existing, { name: metadata.name || existing.name, icon: metadata.icon || existing.icon || findProjectIcon(directory), lastOpened: metadata.lastOpened || existing.lastOpened || 0 }); else projects.unshift({ path: directory, name: metadata.name || path.basename(directory), icon: metadata.icon || findProjectIcon(directory), lastOpened: metadata.lastOpened || 0 }); persistProjects(); return projects })
+ipcMain.handle('update-project', (_, originalPath, project) => { const index = projects.findIndex(item => item.path === originalPath); if (index < 0 || !project?.path) return projects; projects[index] = { ...projects[index], ...project }; persistProjects(); return projects })
 ipcMain.handle('remove-project', (_, directory) => { projects = projects.filter(project => project.path !== directory); persistProjects(); return projects })
 ipcMain.handle('stop-watching', () => {
   if (watcher) watcher.close()

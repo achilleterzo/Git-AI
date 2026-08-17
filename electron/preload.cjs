@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('directoryAPI', {
   gitPush: () => ipcRenderer.invoke('git-push'),
   getProjects: () => ipcRenderer.invoke('get-projects'),
   addProject: (project) => ipcRenderer.invoke('add-project', project),
+  updateProject: (originalPath, project) => ipcRenderer.invoke('update-project', originalPath, project),
   removeProject: (directory) => ipcRenderer.invoke('remove-project', directory),
   onOpenSettings: (callback) => { ipcRenderer.on('open-settings', callback) },
   onUpdate: (callback) => { ipcRenderer.on('directory-update', (_, data) => callback(data)) }
