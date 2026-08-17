@@ -53,6 +53,21 @@ function requestJson(urlString, options = {}, body = null) {
     request.end()
   })
 }
+function fetchLatestRelease() {
+  return new Promise((resolve, reject) => {
+    const request = https.get('https://api.github.com/repos/achilleterzo/Git-AI/releases/latest', { headers: { 'User-Agent': 'Pulse-Git-AI', Accept: 'application/vnd.github+json' }, timeout: 15000 }, response => {
+      let data = ''
+      response.setEncoding('utf8')
+      response.on('data', chunk => { data += chunk })
+      response.on('end', () => {
+        if (response.statusCode < 200 || response.statusCode >= 300) return reject(new Error(`GitHub release check failed (HTTP ${response.statusCode})`))
+        try { const release = JSON.parse(data); resolve({ version: String(release.tag_name || '').replace(/^v/, ''), tag: release.tag_name, url: release.html_url, name: release.name || release.tag_name, notes: release.body || '' }) } catch { reject(new Error('Invalid GitHub release response')) }
+      })
+    })
+    request.on('timeout', () => request.destroy(new Error('GitHub release check timed out')))
+    request.on('error', reject)
+  })
+}
 function loadWindowState() {
   try { return JSON.parse(fs.readFileSync(windowStatePath(), 'utf8')) } catch { return null }
 }
@@ -195,6 +210,9 @@ ipcMain.handle('get-project-icon', (_, directory) => directory ? findProjectIcon
 ipcMain.handle('start-watching', async (_, directory) => { await startWatching(directory); return { ok: true } })
 ipcMain.handle('git-changes', () => currentDirectory ? gitChanges(currentDirectory) : [])
 ipcMain.handle('get-settings', () => aiSettings)
+ipcMain.handle('get-app-version', () => app.getVersion())
+ipcMain.handle('get-latest-release', () => fetchLatestRelease())
+ipcMain.handle('open-release', (_, url) => { if (typeof url === 'string' && /^https:\/\/github\.com\//.test(url)) return shell.openExternal(url); return false })
 ipcMain.handle('save-settings', (_, settings) => saveSettings(settings))
 ipcMain.handle('fetch-models', async (_, endpoint) => { const data = await requestJson(`${String(endpoint).replace(/\/$/, '')}/api/tags`); return (data.models || []).map(model => model.name).filter(Boolean) })
 ipcMain.handle('generate-commit-message', async (_, files) => {

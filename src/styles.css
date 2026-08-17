@@ -77,6 +77,11 @@ aside { border-color:#30343a; background:#1b1e21 }
 .project-card { cursor:pointer }
 .project-edit-button { align-self:flex-end; margin-top:auto; padding:5px 9px; border:1px solid #4a5057; background:#292d31; color:#cbd1d7; font-size:10px }
 .project-edit-button:hover { border-color:#5eead4; color:#5eead4 }
+.update-banner { position:fixed; right:24px; bottom:24px; z-index:8; display:flex; align-items:center; gap:18px; max-width:520px; padding:14px 16px; border:1px solid #4b716d; border-radius:10px; background:#202b2d; box-shadow:0 16px 40px #0008 }
+.update-banner strong,.update-banner span { display:block }
+.update-banner strong { color:#d9fdf5; font-size:12px }
+.update-banner span { margin-top:4px; color:#aeb5bd; font-size:11px }
+.update-banner .primary { height:34px; white-space:nowrap; padding:0 12px }
 .stash-path { border:1px solid #373b41; border-radius:8px; background:#202326; color:#e5e7eb; padding:11px 14px; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
 .stash-pending { border:1px solid #373b41; border-radius:10px; overflow:hidden; background:#202326 }.stash-section-title { display:flex; justify-content:space-between; padding:15px 18px; color:#e5e7eb }.stash-section-title span { color:#9da5ae; font-size:12px }
 .head-selection { display:flex; align-items:center; gap:8px }
