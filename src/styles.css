@@ -33,6 +33,7 @@ aside { border-color:#30343a; background:#1b1e21 }
 .folder-button { order:2; width:38px; height:34px; flex:0 0 38px; padding:0; border-left:1px solid #3b4147; border-right:0; border-radius:0; background:transparent; color:#d7dde2; display:grid; place-items:center }.folder-button svg { display:none }.folder-button::after { content:'↗'; font-size:22px; line-height:1; font-weight:500 }.folder-button:hover { color:#5eead4; background:#30353a }
 .project-react-select { order:1 }
 .project-picker { padding-right:0 }
+.toolbar > .primary { display:none }
 .project-icon { width:38px; height:38px; flex:0 0 38px; object-fit:contain; border:1px solid #373b41; border-radius:8px; background:#202326; padding:4px }
 .push-cta { margin-top:18px; padding:10px 16px; background:#5eead4; color:#10201f; font-size:12px; box-shadow:0 6px 18px #5eead433 }.push-cta:hover:not(:disabled) { background:#8af5e2 }.push-cta:disabled { opacity:.5; cursor:not-allowed }
 .error-modal pre { max-height:320px; overflow:auto; white-space:pre-wrap; word-break:break-word; margin:18px 0 0; padding:12px; border-radius:7px; background:#17191c; color:#ffb4bd; font:12px/1.5 ui-monospace,monospace }
