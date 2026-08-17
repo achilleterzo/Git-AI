@@ -65,6 +65,14 @@ aside { border-color:#30343a; background:#1b1e21 }
 .new-project-card { border-style:dashed; color:#5eead4; justify-content:center }
 .new-project-card:hover { border-color:#5eead4; background:#202b2d }
 .new-project-icon { font-size:26px !important; line-height:1; color:#5eead4 }
+.project-modal { width:min(560px, calc(100vw - 40px)) }
+.project-path-input { display:flex; gap:8px }
+.project-path-input input { flex:1; min-width:0 }
+.project-preview { display:flex; align-items:center; gap:12px; padding:12px; border:1px solid #373b41; border-radius:8px; background:#17191c }
+.project-preview img { width:40px; height:40px; object-fit:contain; flex:0 0 40px }
+.project-preview div { flex:1; min-width:0 }
+.project-preview strong,.project-preview small { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+.project-preview small { color:#8f98a2; font-size:11px; margin-top:4px }
 .stash-path { border:1px solid #373b41; border-radius:8px; background:#202326; color:#e5e7eb; padding:11px 14px; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
 .stash-pending { border:1px solid #373b41; border-radius:10px; overflow:hidden; background:#202326 }.stash-section-title { display:flex; justify-content:space-between; padding:15px 18px; color:#e5e7eb }.stash-section-title span { color:#9da5ae; font-size:12px }
 .head-selection { display:flex; align-items:center; gap:8px }

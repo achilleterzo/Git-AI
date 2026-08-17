@@ -2,6 +2,8 @@ const { contextBridge, ipcRenderer } = require('electron')
 
 contextBridge.exposeInMainWorld('directoryAPI', {
   chooseDirectory: () => ipcRenderer.invoke('choose-directory'),
+  chooseProjectIcon: () => ipcRenderer.invoke('choose-project-icon'),
+  getProjectIcon: (directory) => ipcRenderer.invoke('get-project-icon', directory),
   startWatching: (directory) => ipcRenderer.invoke('start-watching', directory),
   stopWatching: () => ipcRenderer.invoke('stop-watching'),
   gitChanges: () => ipcRenderer.invoke('git-changes'),
@@ -18,7 +20,7 @@ contextBridge.exposeInMainWorld('directoryAPI', {
   gitPull: () => ipcRenderer.invoke('git-pull'),
   gitPush: () => ipcRenderer.invoke('git-push'),
   getProjects: () => ipcRenderer.invoke('get-projects'),
-  addProject: (directory) => ipcRenderer.invoke('add-project', directory),
+  addProject: (project) => ipcRenderer.invoke('add-project', project),
   removeProject: (directory) => ipcRenderer.invoke('remove-project', directory),
   onOpenSettings: (callback) => { ipcRenderer.on('open-settings', callback) },
   onUpdate: (callback) => { ipcRenderer.on('directory-update', (_, data) => callback(data)) }
