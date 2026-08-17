@@ -53,20 +53,31 @@ function requestJson(urlString, options = {}, body = null) {
     request.end()
   })
 }
-function fetchLatestRelease() {
+function fetchGitHubJson(url) {
   return new Promise((resolve, reject) => {
-    const request = https.get('https://api.github.com/repos/achilleterzo/Git-AI/releases/latest', { headers: { 'User-Agent': 'Pulse-Git-AI', Accept: 'application/vnd.github+json' }, timeout: 15000 }, response => {
+    const request = https.get(url, { headers: { 'User-Agent': 'Pulse-Git-AI', Accept: 'application/vnd.github+json' }, timeout: 15000 }, response => {
       let data = ''
       response.setEncoding('utf8')
       response.on('data', chunk => { data += chunk })
       response.on('end', () => {
         if (response.statusCode < 200 || response.statusCode >= 300) return reject(new Error(`GitHub release check failed (HTTP ${response.statusCode})`))
-        try { const release = JSON.parse(data); resolve({ version: String(release.tag_name || '').replace(/^v/, ''), tag: release.tag_name, url: release.html_url, name: release.name || release.tag_name, notes: release.body || '' }) } catch { reject(new Error('Invalid GitHub release response')) }
+        try { resolve(JSON.parse(data)) } catch { reject(new Error('Invalid GitHub release response')) }
       })
     })
     request.on('timeout', () => request.destroy(new Error('GitHub release check timed out')))
     request.on('error', reject)
   })
+}
+function releaseVersion(value) { return String(value || '').replace(/^v/i, '').match(/^\d+(?:\.\d+){0,2}/)?.[0] || '' }
+function compareReleaseVersions(left, right) { const a = releaseVersion(left).split('.').map(Number); const b = releaseVersion(right).split('.').map(Number); for (let index = 0; index < 3; index += 1) { const difference = (a[index] || 0) - (b[index] || 0); if (difference) return difference } return 0 }
+async function fetchLatestRelease() {
+  const releases = await fetchGitHubJson('https://api.github.com/repos/achilleterzo/Git-AI/releases?per_page=30')
+  const candidates = (Array.isArray(releases) ? releases : [releases]).filter(release => !release.draft && release.tag_name && releaseVersion(release.tag_name))
+  const release = candidates.sort((left, right) => compareReleaseVersions(right.tag_name, left.tag_name))[0]
+  if (!release) throw new Error('No published GitHub release found')
+  const result = { version: releaseVersion(release.tag_name), tag: release.tag_name, url: release.html_url, name: release.name || release.tag_name, notes: release.body || '' }
+  console.log('[Update] latest release', result)
+  return result
 }
 function loadWindowState() {
   try { return JSON.parse(fs.readFileSync(windowStatePath(), 'utf8')) } catch { return null }
@@ -211,7 +222,7 @@ ipcMain.handle('start-watching', async (_, directory) => { await startWatching(d
 ipcMain.handle('git-changes', () => currentDirectory ? gitChanges(currentDirectory) : [])
 ipcMain.handle('get-settings', () => aiSettings)
 ipcMain.handle('get-app-version', () => app.getVersion())
-ipcMain.handle('get-latest-release', () => fetchLatestRelease())
+ipcMain.handle('get-latest-release', async () => { try { return await fetchLatestRelease() } catch (error) { console.error('[Update] release check failed', error.message); throw error } })
 ipcMain.handle('open-release', (_, url) => { if (typeof url === 'string' && /^https:\/\/github\.com\//.test(url)) return shell.openExternal(url); return false })
 ipcMain.handle('save-settings', (_, settings) => saveSettings(settings))
 ipcMain.handle('fetch-models', async (_, endpoint) => { const data = await requestJson(`${String(endpoint).replace(/\/$/, '')}/api/tags`); return (data.models || []).map(model => model.name).filter(Boolean) })
