@@ -18,6 +18,10 @@ let projects = []
 
 const PUBLISH_DEBOUNCE_MS = 200
 
+function sendOperationLog(message) {
+  if (win && !win.isDestroyed()) win.webContents.send('operation-log', { message: String(message), at: new Date().toISOString() })
+}
+
 function windowStatePath() { return path.join(app.getPath('userData'), 'window-state.json') }
 function settingsPath() { return path.join(app.getPath('userData'), 'settings.json') }
 function projectsPath() { return path.join(app.getPath('userData'), 'projects.json') }
@@ -121,8 +125,21 @@ function ensureGitRepository(directory) {
     resolve(stdout.trim())
   }))
 }
-function gitPushPending(directory) {
-  return new Promise(resolve => execFile('git', ['-C', directory, 'rev-list', '--count', '@{u}..HEAD'], { windowsHide: true, timeout: 10000 }, (error, stdout) => resolve(!error && Number.parseInt(stdout.trim(), 10) > 0)))
+function isDirectoryEmpty(directory) {
+  return fs.readdirSync(directory).length === 0
+}
+function runGit(directory, args, timeout = 120000) {
+  return new Promise((resolve, reject) => execFile('git', ['-C', directory, ...args], { windowsHide: true, timeout, maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => error ? reject(new Error(stderr.trim() || stdout.trim() || error.message)) : resolve(stdout.trim())) )
+}
+function gitAheadBehind(directory) {
+  return new Promise(resolve => execFile('git', ['-C', directory, 'rev-list', '--left-right', '--count', '@{u}...HEAD'], { windowsHide: true, timeout: 10000 }, (error, stdout) => {
+    if (error) return resolve({ incoming: 0, outgoing: 0 })
+    const [incoming, outgoing] = stdout.trim().split(/\s+/).map(value => Number.parseInt(value, 10) || 0)
+    resolve({ incoming, outgoing })
+  }))
+}
+function gitCurrentBranch(directory) {
+  return new Promise(resolve => execFile('git', ['-C', directory, 'branch', '--show-current'], { windowsHide: true, timeout: 10000 }, (error, stdout) => resolve(!error ? stdout.trim() : '')))
 }
 function findProjectIcon(directory) {
   try {
@@ -154,13 +171,15 @@ async function publish(reason = 'refresh', generation = watchGeneration) {
   publishRunning = true
   const directory = currentDirectory
   try {
-    const results = await Promise.allSettled([shellSnapshot(directory), gitChanges(directory), gitPushPending(directory)])
+    const results = await Promise.allSettled([shellSnapshot(directory), gitChanges(directory), gitAheadBehind(directory), gitCurrentBranch(directory)])
     const files = results[0].status === 'fulfilled' ? results[0].value : []
     const changes = results[1].status === 'fulfilled' ? results[1].value : []
     const scanError = results[0].status === 'rejected' ? `File scan: ${results[0].reason.message}` : null
     const gitError = results[1].status === 'rejected' ? `Git: ${results[1].reason.message}` : null
     if (directory === currentDirectory && generation === watchGeneration) {
-      const update = { directory, projectIcon: findProjectIcon(directory), files, changes, pushPending: results[2].status === 'fulfilled' && results[2].value, gitOk: results[1].status === 'fulfilled', reason, error: [scanError, gitError].filter(Boolean).join(' | ') || null, at: new Date().toISOString() }
+      const aheadBehind = results[2].status === 'fulfilled' ? results[2].value : { incoming: 0, outgoing: 0 }
+      const branch = results[3].status === 'fulfilled' ? results[3].value : ''
+      const update = { directory, projectIcon: findProjectIcon(directory), files, changes, incomingCommits: aheadBehind.incoming, outgoingCommits: aheadBehind.outgoing, branch, gitOk: results[1].status === 'fulfilled', reason, error: [scanError, gitError].filter(Boolean).join(' | ') || null, at: new Date().toISOString() }
       win.webContents.send('directory-update', update)
       return update
     }
@@ -200,7 +219,16 @@ function createWindow() {
   win.webContents.on('did-fail-load', (_, code, description) => console.error(`Renderer load failed (${code}): ${description}`))
 }
 async function startWatching(directory) {
-  await ensureGitRepository(directory)
+  try {
+    await ensureGitRepository(directory)
+  } catch (error) {
+    if (isDirectoryEmpty(directory)) {
+      const emptyError = new Error('The selected directory is empty and is not a Git repository')
+      emptyError.code = 'EMPTY_DIRECTORY_NOT_REPOSITORY'
+      throw emptyError
+    }
+    throw error
+  }
   if (watcher) watcher.close()
   if (publishTimer) { clearTimeout(publishTimer); publishTimer = null }
   watchGeneration += 1
@@ -219,6 +247,32 @@ ipcMain.handle('choose-directory', async () => (await dialog.showOpenDialog(win,
 ipcMain.handle('choose-project-icon', async () => { const result = await dialog.showOpenDialog(win, { properties: ['openFile'], filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'ico', 'svg'] }] }); return result.filePaths[0] ? readIconFile(result.filePaths[0]) : null })
 ipcMain.handle('get-project-icon', (_, directory) => directory ? findProjectIcon(directory) : null)
 ipcMain.handle('start-watching', async (_, directory) => { await startWatching(directory); return { ok: true } })
+ipcMain.handle('initialize-repository', async (_, directory) => { sendOperationLog(`Initializing Git repository in ${directory}`); await runGit(directory, ['init'], 30000); sendOperationLog('Git repository initialized'); await startWatching(directory); sendOperationLog('Watcher started'); return { ok: true } })
+ipcMain.handle('checkout-repository', async (_, { directory, remote }) => {
+  if (!directory || !String(remote || '').trim()) throw new Error('Enter a repository URL')
+  const remoteUrl = String(remote).trim()
+  sendOperationLog(`Checking out ${remoteUrl} into ${directory}`)
+  try {
+    await ensureGitRepository(directory)
+    sendOperationLog('The destination is already a Git repository; reconnecting the remote')
+    const existingRemote = await runGit(directory, ['remote', 'get-url', 'origin'], 30000).catch(() => '')
+    if (!existingRemote) await runGit(directory, ['remote', 'add', 'origin', remoteUrl], 30000)
+    await runGit(directory, ['fetch', 'origin'], 120000)
+    await runGit(directory, ['remote', 'set-head', 'origin', '-a'], 30000).catch(() => '')
+    const remoteHead = await runGit(directory, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], 30000).catch(() => '')
+    if (remoteHead.startsWith('origin/')) await runGit(directory, ['checkout', '-B', remoteHead.slice('origin/'.length), remoteHead], 30000)
+  } catch (existingRepositoryError) {
+    sendOperationLog('Destination is not a usable repository; running git clone')
+    await new Promise((resolve, reject) => execFile('git', ['clone', remoteUrl, directory], { windowsHide: true, timeout: 120000, maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
+      if (stdout.trim()) sendOperationLog(stdout.trim())
+      if (error) { if (stderr.trim()) sendOperationLog(stderr.trim()); return reject(new Error(stderr.trim() || stdout.trim() || error.message)) }
+      resolve(stdout.trim())
+    }))
+  }
+  await startWatching(directory)
+  sendOperationLog('Checkout completed and watcher started')
+  return { ok: true }
+})
 ipcMain.handle('git-changes', () => currentDirectory ? gitChanges(currentDirectory) : [])
 ipcMain.handle('get-settings', () => aiSettings)
 ipcMain.handle('get-app-version', () => app.getVersion())
@@ -296,7 +350,13 @@ ipcMain.handle('commit-selected', async (_, { files, message }) => {
 ipcMain.handle('refresh', async () => publish('post-commit'))
 async function runGitRemote(command) {
   if (!currentDirectory) throw new Error('No directory selected')
-  return new Promise((resolve, reject) => execFile('git', ['-C', currentDirectory, command], { windowsHide: true, timeout: 120000, maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => error ? reject(new Error(stderr.trim() || stdout.trim() || error.message)) : resolve(stdout.trim() || `${command} completed`)))
+  sendOperationLog(`${command === 'pull' ? 'Pull' : 'Push'} started`)
+  return new Promise((resolve, reject) => execFile('git', ['-C', currentDirectory, command], { windowsHide: true, timeout: 120000, maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
+    if (stdout.trim()) sendOperationLog(stdout.trim())
+    if (error) { if (stderr.trim()) sendOperationLog(stderr.trim()); return reject(new Error(stderr.trim() || stdout.trim() || error.message)) }
+    sendOperationLog(`${command === 'pull' ? 'Pull' : 'Push'} completed`)
+    resolve(stdout.trim() || `${command} completed`)
+  }))
 }
 ipcMain.handle('git-pull', async () => { const result = await runGitRemote('pull'); await publish('git-pull'); return result })
 ipcMain.handle('git-push', async () => { const result = await runGitRemote('push'); await publish('git-push'); return result })

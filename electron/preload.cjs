@@ -5,6 +5,8 @@ contextBridge.exposeInMainWorld('directoryAPI', {
   chooseProjectIcon: () => ipcRenderer.invoke('choose-project-icon'),
   getProjectIcon: (directory) => ipcRenderer.invoke('get-project-icon', directory),
   startWatching: (directory) => ipcRenderer.invoke('start-watching', directory),
+  initializeRepository: (directory) => ipcRenderer.invoke('initialize-repository', directory),
+  checkoutRepository: (directory, remote) => ipcRenderer.invoke('checkout-repository', { directory, remote }),
   stopWatching: () => ipcRenderer.invoke('stop-watching'),
   gitChanges: () => ipcRenderer.invoke('git-changes'),
   getSettings: () => ipcRenderer.invoke('get-settings'),
@@ -28,4 +30,5 @@ contextBridge.exposeInMainWorld('directoryAPI', {
   removeProject: (directory) => ipcRenderer.invoke('remove-project', directory),
   onOpenSettings: (callback) => { ipcRenderer.on('open-settings', callback) },
   onUpdate: (callback) => { ipcRenderer.on('directory-update', (_, data) => callback(data)) }
+  ,onOperationLog: (callback) => { ipcRenderer.on('operation-log', (_, data) => callback(data)) }
 })
