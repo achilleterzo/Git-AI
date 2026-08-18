@@ -83,7 +83,7 @@ function App() {
     setOutgoingCommits(Number(data.outgoingCommits) || 0)
     setCurrentBranch(String(data.branch || '').trim())
     setGitLfs(Boolean(data.gitLfs))
-    if (pendingRefreshRef.current && data.reason === pendingRefreshRef.current) { pendingRefreshRef.current = ''; setLoading('') }
+    if (['started', 'post-commit', 'stash-created', 'git-pull', 'git-push', 'branch-switch', 'stash-pop', 'stash-merge', 'stash-files-restore', 'stash-delete', 'revert-files', 'lfs-track', 'lfs-untrack', 'lfs-enabled', 'lfs-disabled'].includes(data.reason)) { pendingRefreshRef.current = ''; setLoading('') }
     if (data.directory) setProjects(value => value.map(project => project.path === data.directory ? { ...project, gitLfs: Boolean(data.gitLfs), icon: data.projectIcon || project.icon } : project))
     if (data.reason === 'directory-removed') {
       setActive(false)
