@@ -3,8 +3,10 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 
-export default function TerminalConsole({ directory }) {
+export default function TerminalConsole({ directory, visible = true }) {
   const containerRef = useRef(null)
+  const terminalRef = useRef(null)
+  const fitRef = useRef(null)
 
   useEffect(() => {
     if (!containerRef.current || !directory) return undefined
@@ -20,7 +22,10 @@ export default function TerminalConsole({ directory }) {
     terminal.loadAddon(fit)
     terminal.open(containerRef.current)
     terminal.focus()
-    containerRef.current.addEventListener('click', () => terminal.focus())
+    terminalRef.current = terminal
+    fitRef.current = fit
+    const focusTerminal = () => terminal.focus()
+    containerRef.current.addEventListener('click', focusTerminal)
     const resize = () => { fit.fit(); window.directoryAPI.resizeTerminal({ cols: terminal.cols, rows: terminal.rows }) }
     const dataCleanup = window.directoryAPI.onTerminalData(data => terminal.write(data))
     const exitCleanup = window.directoryAPI.onTerminalExit(() => terminal.write('\r\n[Process exited]\r\n'))
@@ -29,8 +34,14 @@ export default function TerminalConsole({ directory }) {
     observer.observe(containerRef.current)
     window.directoryAPI.startTerminal(directory).then(resize).catch(error => terminal.write(`\r\n\x1b[31m${error.message}\x1b[0m\r\n`))
     resize()
-    return () => { observer.disconnect(); input.dispose(); dataCleanup?.(); exitCleanup?.(); window.directoryAPI.stopTerminal(); terminal.dispose() }
+    return () => { observer.disconnect(); input.dispose(); dataCleanup?.(); exitCleanup?.(); containerRef.current?.removeEventListener('click', focusTerminal); terminalRef.current = null; fitRef.current = null; window.directoryAPI.stopTerminal(); terminal.dispose() }
   }, [directory])
+
+  useEffect(() => {
+    if (!visible || !terminalRef.current) return undefined
+    const timer = requestAnimationFrame(() => { fitRef.current?.fit(); terminalRef.current?.focus() })
+    return () => cancelAnimationFrame(timer)
+  }, [visible])
 
   return <div className="terminal-console" ref={containerRef} />
 }
