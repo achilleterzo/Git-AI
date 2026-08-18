@@ -312,3 +312,9 @@ aside { position:fixed; inset:0 auto 0 0; z-index:5; height:100vh; }
 .console-command-form button { height:34px; padding:0 13px }
 .terminal-console { flex:1; height:auto; min-height:0; margin-top:0; padding:10px; overflow:hidden; border:0; border-radius:0; background:#17191c; box-shadow:none }
 .terminal-console .xterm { height:100%; }
+/* Determinate loader: real percentage from streamed git progress. */
+.loader-content.determinate { min-width:230px; }
+.loading-phase { display:flex; justify-content:space-between; gap:12px; margin-bottom:7px; color:#9da4ad; font-size:11px; }
+.loading-phase span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.loading-phase b { color:#5eead4; font-variant-numeric:tabular-nums; }
+.loader-content.determinate .loading-progress span { width:0; animation:none; transition:width .18s linear; }

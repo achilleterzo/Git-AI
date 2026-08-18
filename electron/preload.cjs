@@ -53,4 +53,5 @@ contextBridge.exposeInMainWorld('directoryAPI', {
   onOpenAbout: (callback) => { ipcRenderer.on('open-about', callback) },
   onUpdate: (callback) => { ipcRenderer.on('directory-update', (_, data) => callback(data)) }
   ,onOperationLog: (callback) => { ipcRenderer.on('operation-log', (_, data) => callback(data)) }
+  ,onOperationProgress: (callback) => { ipcRenderer.on('operation-progress', (_, data) => callback(data)) }
 })

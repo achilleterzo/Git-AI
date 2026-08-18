@@ -1,5 +1,5 @@
 const { app, BrowserWindow, dialog, ipcMain, Menu, screen, shell } = require('electron')
-const { execFile } = require('child_process')
+const { execFile, spawn } = require('child_process')
 const pty = require('node-pty')
 const os = require('os')
 const http = require('http')
@@ -156,6 +156,63 @@ function runGit(directory, args, timeout = 120000) {
 function runGitWithEnv(directory, args, env, timeout = 120000) {
   return new Promise((resolve, reject) => execFile('git', ['-C', directory, ...args], { windowsHide: true, timeout, maxBuffer: 16 * 1024 * 1024, env: { ...process.env, ...env } }, (error, stdout, stderr) => error ? reject(new Error(stderr.trim() || stdout.trim() || error.message)) : resolve(stdout.trim())))
 }
+const GIT_PROGRESS_PATTERN = /^(?:remote:\s*)?([A-Za-z][A-Za-z ]*[A-Za-z]):\s+(\d{1,3})%/
+const GIT_STREAM_IDLE_MS = 120000
+
+// Streams a git command instead of buffering it, so long network operations can report
+// real progress to the renderer. The timeout is on idleness, not on total duration: a
+// large clone stays alive as long as git keeps talking.
+function runGitStreaming(args, { cwd, idleTimeout = GIT_STREAM_IDLE_MS } = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn('git', args, { cwd, windowsHide: true, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } })
+    const pending = { out: '', err: '' }
+    let output = ''
+    let failure = ''
+    let settled = false
+    let idleTimer = null
+    let lastProgress = ''
+    const settle = (action, value) => { if (settled) return; settled = true; if (idleTimer) clearTimeout(idleTimer); action(value) }
+    const armIdle = () => {
+      if (idleTimer) clearTimeout(idleTimer)
+      idleTimer = setTimeout(() => {
+        child.kill()
+        settle(reject, new Error(`No output from git for ${Math.round(idleTimeout / 1000)}s; the operation was aborted`))
+      }, idleTimeout)
+    }
+    const handleLine = (raw, isError) => {
+      const line = raw.trim()
+      if (!line) return
+      if (isError) failure += `${line}\n`
+      else output += `${line}\n`
+      const match = line.match(GIT_PROGRESS_PATTERN)
+      if (match) {
+        const tick = `${match[1].trim()}:${match[2]}`
+        if (tick !== lastProgress) { lastProgress = tick; sendRenderer('operation-progress', { phase: match[1].trim(), percent: Number(match[2]) }) }
+        if (!/done\.$/.test(line)) return
+      }
+      sendOperationLog(line)
+    }
+    const consume = (key, chunk, isError) => {
+      armIdle()
+      const parts = (pending[key] + chunk).split(/\r\n|\r|\n/)
+      pending[key] = parts.pop()
+      parts.forEach(line => handleLine(line, isError))
+    }
+    armIdle()
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
+    child.stdout.on('data', chunk => consume('out', chunk, false))
+    child.stderr.on('data', chunk => consume('err', chunk, true))
+    child.on('error', error => settle(reject, error))
+    child.on('close', code => {
+      if (pending.out) handleLine(pending.out, false)
+      if (pending.err) handleLine(pending.err, true)
+      if (code === 0) settle(resolve, output.trim())
+      else settle(reject, new Error(failure.trim() || output.trim() || `git ${args.find(arg => !arg.startsWith('-') && arg !== '-C') || ''} exited with code ${code}`))
+    })
+  })
+}
+
 function gitAheadBehind(directory) {
   return new Promise(resolve => execFile('git', ['-C', directory, 'rev-list', '--left-right', '--count', '@{u}...HEAD'], { windowsHide: true, timeout: 10000 }, (error, stdout) => {
     if (error) return resolve({ incoming: 0, outgoing: 0 })
@@ -312,17 +369,13 @@ ipcMain.handle('checkout-repository', async (_, { directory, remote }) => {
     sendOperationLog('The destination is already a Git repository; reconnecting the remote')
     const existingRemote = await runGit(directory, ['remote', 'get-url', 'origin'], 30000).catch(() => '')
     if (!existingRemote) await runGit(directory, ['remote', 'add', 'origin', remoteUrl], 30000)
-    await runGit(directory, ['fetch', 'origin'], 120000)
+    await runGitStreaming(['-C', directory, 'fetch', '--progress', 'origin'])
     await runGit(directory, ['remote', 'set-head', 'origin', '-a'], 30000).catch(() => '')
     const remoteHead = await runGit(directory, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], 30000).catch(() => '')
     if (remoteHead.startsWith('origin/')) await runGit(directory, ['checkout', '-B', remoteHead.slice('origin/'.length), remoteHead], 30000)
   } catch (existingRepositoryError) {
     sendOperationLog('Destination is not a usable repository; running git clone')
-    await new Promise((resolve, reject) => execFile('git', ['clone', remoteUrl, directory], { windowsHide: true, timeout: 120000, maxBuffer: 16 * 1024 * 1024, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }, (error, stdout, stderr) => {
-      if (stdout.trim()) sendOperationLog(stdout.trim())
-      if (error) { if (stderr.trim()) sendOperationLog(stderr.trim()); return reject(new Error(stderr.trim() || stdout.trim() || error.message)) }
-      resolve(stdout.trim())
-    }))
+    await runGitStreaming(['clone', '--progress', remoteUrl, directory])
   }
   await startWatching(directory)
   sendOperationLog('Checkout completed and watcher started')
@@ -450,12 +503,9 @@ ipcMain.handle('refresh', async () => publish('post-commit'))
 async function runGitRemote(command) {
   if (!currentDirectory) throw new Error('No directory selected')
   sendOperationLog(`${command === 'pull' ? 'Pull' : 'Push'} started`)
-  return new Promise((resolve, reject) => execFile('git', ['-C', currentDirectory, command], { windowsHide: true, timeout: 120000, maxBuffer: 16 * 1024 * 1024, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }, (error, stdout, stderr) => {
-    if (stdout.trim()) sendOperationLog(stdout.trim())
-    if (error) { if (stderr.trim()) sendOperationLog(stderr.trim()); return reject(new Error(stderr.trim() || stdout.trim() || error.message)) }
-    sendOperationLog(`${command === 'pull' ? 'Pull' : 'Push'} completed`)
-    resolve(stdout.trim() || `${command} completed`)
-  }))
+  const output = await runGitStreaming(['-C', currentDirectory, command, '--progress'])
+  sendOperationLog(`${command === 'pull' ? 'Pull' : 'Push'} completed`)
+  return output || `${command} completed`
 }
 ipcMain.handle('git-pull', async () => { const result = await runGitRemote('pull'); await publish('git-pull'); return result })
 ipcMain.handle('git-push', async () => { const result = await runGitRemote('push'); await publish('git-push'); return result })
