@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import FilesTable from '../components/FilesTable'
 
-export default function LfsPage({ directory, gitLfs, loading, setLoading, setErrorModal }) {
+export default function LfsPage({ directory, gitLfs, loading, runOperation, setErrorModal }) {
   const [patterns, setPatterns] = useState([])
   const [files, setFiles] = useState([])
   const [pattern, setPattern] = useState('')
@@ -26,13 +26,11 @@ export default function LfsPage({ directory, gitLfs, loading, setLoading, setErr
   async function trackPattern(event) {
     event.preventDefault()
     if (!pattern.trim()) return
-    setLoading('Tracking LFS pattern…')
-    try { await window.directoryAPI.trackLfs(pattern.trim()); setPattern(''); await refreshLfs() } catch (error) { setErrorModal(error.message) } finally { setLoading('') }
+    try { await runOperation('Tracking LFS pattern…', () => window.directoryAPI.trackLfs(pattern.trim())); setPattern(''); await refreshLfs() } catch (error) { setErrorModal(error.message) }
   }
 
   async function untrackPattern(value) {
-    setLoading('Removing LFS pattern…')
-    try { await window.directoryAPI.untrackLfs(value); await refreshLfs() } catch (error) { setErrorModal(error.message) } finally { setLoading('') }
+    try { await runOperation('Removing LFS pattern…', () => window.directoryAPI.untrackLfs(value)); await refreshLfs() } catch (error) { setErrorModal(error.message) }
   }
 
   return (

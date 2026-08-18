@@ -318,7 +318,7 @@ ipcMain.handle('checkout-repository', async (_, { directory, remote }) => {
     if (remoteHead.startsWith('origin/')) await runGit(directory, ['checkout', '-B', remoteHead.slice('origin/'.length), remoteHead], 30000)
   } catch (existingRepositoryError) {
     sendOperationLog('Destination is not a usable repository; running git clone')
-    await new Promise((resolve, reject) => execFile('git', ['clone', remoteUrl, directory], { windowsHide: true, timeout: 120000, maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
+    await new Promise((resolve, reject) => execFile('git', ['clone', remoteUrl, directory], { windowsHide: true, timeout: 120000, maxBuffer: 16 * 1024 * 1024, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }, (error, stdout, stderr) => {
       if (stdout.trim()) sendOperationLog(stdout.trim())
       if (error) { if (stderr.trim()) sendOperationLog(stderr.trim()); return reject(new Error(stderr.trim() || stdout.trim() || error.message)) }
       resolve(stdout.trim())
@@ -450,7 +450,7 @@ ipcMain.handle('refresh', async () => publish('post-commit'))
 async function runGitRemote(command) {
   if (!currentDirectory) throw new Error('No directory selected')
   sendOperationLog(`${command === 'pull' ? 'Pull' : 'Push'} started`)
-  return new Promise((resolve, reject) => execFile('git', ['-C', currentDirectory, command], { windowsHide: true, timeout: 120000, maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
+  return new Promise((resolve, reject) => execFile('git', ['-C', currentDirectory, command], { windowsHide: true, timeout: 120000, maxBuffer: 16 * 1024 * 1024, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }, (error, stdout, stderr) => {
     if (stdout.trim()) sendOperationLog(stdout.trim())
     if (error) { if (stderr.trim()) sendOperationLog(stderr.trim()); return reject(new Error(stderr.trim() || stdout.trim() || error.message)) }
     sendOperationLog(`${command === 'pull' ? 'Pull' : 'Push'} completed`)
