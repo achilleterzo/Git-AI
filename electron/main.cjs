@@ -94,7 +94,11 @@ function releaseVersion(value) { return String(value || '').replace(/^v/i, '').m
 function compareReleaseVersions(left, right) { const a = releaseVersion(left).split('.').map(Number); const b = releaseVersion(right).split('.').map(Number); for (let index = 0; index < 3; index += 1) { const difference = (a[index] || 0) - (b[index] || 0); if (difference) return difference } return 0 }
 async function fetchLatestRelease() {
   const releases = await fetchGitHubJson('https://api.github.com/repos/achilleterzo/Git-AI/releases?per_page=30')
-  const candidates = (Array.isArray(releases) ? releases : [releases]).filter(release => !release.draft && release.tag_name && releaseVersion(release.tag_name))
+  const candidates = (Array.isArray(releases) ? releases : [releases]).filter(release => {
+    if (release.draft || !release.tag_name || !releaseVersion(release.tag_name)) return false
+    const assets = Array.isArray(release.assets) ? release.assets : []
+    return assets.some(asset => asset.state === 'uploaded' && Number(asset.size) > 0 && asset.browser_download_url && /\.(exe|msi|dmg|appimage|deb|zip)$/i.test(asset.name || ''))
+  })
   const release = candidates.sort((left, right) => compareReleaseVersions(right.tag_name, left.tag_name))[0]
   if (!release) throw new Error('No published GitHub release found')
   const result = { version: releaseVersion(release.tag_name), tag: release.tag_name, url: release.html_url, name: release.name || release.tag_name, notes: release.body || '' }
