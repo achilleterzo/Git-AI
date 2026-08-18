@@ -224,6 +224,14 @@ aside { border-color:#30343a; background:#1b1e21 }
 .compact-files-panel .panel-head h2 { font-size:14px; }
 .compact-files-panel .panel-head p { font-size:11px; }
 .repository-action-buttons { display:flex !important; flex:0 0 auto !important; flex-direction:row; flex-wrap:nowrap; justify-content:flex-end; align-items:center; gap:7px; width:auto !important; min-width:0; height:24px; margin:0 !important; padding:0 !important; }
+.repository-more-actions { position:relative; }
+.more-actions-button { min-width:30px; padding:3px 8px !important; border:0 !important; background:transparent !important; box-shadow:none !important; color:#aeb7bd; letter-spacing:2px; }
+.more-actions-button:hover { background:transparent !important; border:0 !important; color:#5eead4; }
+.repository-more-menu { position:absolute; top:calc(100% + 7px); right:0; z-index:8; min-width:130px; padding:5px; border:1px solid #566168; border-radius:8px; background:#24282b; box-shadow:0 12px 28px #0009; }
+.repository-more-menu button { display:block; width:100%; padding:8px 10px; border-radius:6px; background:transparent; color:#d7dde2; text-align:left; font-size:11px; font-weight:600; white-space:nowrap; }
+.repository-more-menu button:hover:not(:disabled) { background:#30373b; color:#5eead4; }
+.repository-more-menu button:disabled { opacity:.45; cursor:not-allowed; }
+.repository-more-menu .danger-menu-item { color:#fb9aa8; }
 .repository-actions-bar .git-button { flex:0 0 auto !important; height:24px; padding:3px 10px; border:1px solid #566168; border-radius:8px; background:#394044; color:#d7dde2; font-size:11px; line-height:16px; white-space:nowrap; }
 .repository-actions-bar .danger-button { color:#fb9aa8; border-color:#754650; }
 .repository-actions-bar .danger-button:hover:not(:disabled) { background:#4a3036; color:#ffc1ca; }

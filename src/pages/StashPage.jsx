@@ -32,7 +32,7 @@ export default function StashPage({ directory, projects, choose, selectProject, 
   return (
     <div className="tab-page stash-page">
       <ProjectToolbar {...{ directory, projects, choose, selectProject, removeProjectOption, active, stop, resume, defaultPathIcon }} />
-      <RepositoryActionsBar {...{ directory, currentBranch, gitLfs, onBranchSwitch, incomingCommits, outgoingCommits, selected, aiBusy, gitBusy, generateCommitMessage, generateStashMergeMessage, mergeStashes, runGitRemote, requestPush, requestDeleteStash, selectedStashes, selectedStashFiles: [...stashFileSelected], restoreStash: restoreSelectedStash }} showStash showRestore showDeleteStash showRevert={false} />
+      <RepositoryActionsBar {...{ directory, currentBranch, gitLfs, onBranchSwitch, incomingCommits, outgoingCommits, selected, aiBusy, gitBusy, generateCommitMessage, generateStashMergeMessage, mergeStashes, runGitRemote, requestPush, requestDeleteStash, selectedStashes, selectedStashFiles: [...stashFileSelected], restoreStash: restoreSelectedStash }} showStashOutside showRestore showDeleteStash showRevert={false} />
       {changes.length > 0 && <FilesTable {...{ changes, query, selected, expanded, toggleFolder, toggleSelection, openDiff }} variant="stash" onQueryChange={setQuery} />}
       {!directory ? (
         <div className="empty"><div>—</div><h3>No project selected</h3><p>Select a project to view its stashes.</p></div>
