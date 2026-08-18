@@ -169,6 +169,9 @@ function gitCurrentBranch(directory) {
     })
   }))
 }
+function gitHasCommits(directory) {
+  return new Promise(resolve => execFile('git', ['-C', directory, 'rev-parse', '--verify', 'HEAD'], { windowsHide: true, timeout: 10000 }, error => resolve(!error)))
+}
 function gitLfsAvailable(directory) {
   return new Promise(resolve => execFile('git', ['-C', directory, 'config', '--local', '--get-regexp', '^filter\\.lfs\\.'], { windowsHide: true, timeout: 10000 }, error => resolve(!error)))
 }
@@ -202,7 +205,7 @@ async function publish(reason = 'refresh', generation = watchGeneration) {
   publishRunning = true
   const directory = currentDirectory
   try {
-    const results = await Promise.allSettled([shellSnapshot(directory), gitChanges(directory), gitAheadBehind(directory), gitCurrentBranch(directory), gitLfsAvailable(directory)])
+    const results = await Promise.allSettled([shellSnapshot(directory), gitChanges(directory), gitAheadBehind(directory), gitCurrentBranch(directory), gitLfsAvailable(directory), gitHasCommits(directory)])
     const files = results[0].status === 'fulfilled' ? results[0].value : []
     const changes = results[1].status === 'fulfilled' ? results[1].value : []
     if (!fs.existsSync(directory)) {
@@ -212,7 +215,7 @@ async function publish(reason = 'refresh', generation = watchGeneration) {
       currentDirectory = null
       watchGeneration += 1
       publishQueued = false
-      sendRenderer('directory-update', { directory: '', removedDirectory: directory, projectIcon: null, files: [], changes: [], incomingCommits: 0, outgoingCommits: 0, branch: '', gitLfs: false, gitOk: false, reason: 'directory-removed', error: null, at: new Date().toISOString() })
+      sendRenderer('directory-update', { directory: '', removedDirectory: directory, projectIcon: null, files: [], changes: [], incomingCommits: 0, outgoingCommits: 0, branch: '', gitLfs: false, hasCommits: false, gitOk: false, reason: 'directory-removed', error: null, at: new Date().toISOString() })
       return null
     }
     const scanError = results[0].status === 'rejected' ? `File scan: ${results[0].reason.message}` : null
@@ -221,9 +224,10 @@ async function publish(reason = 'refresh', generation = watchGeneration) {
       const aheadBehind = results[2].status === 'fulfilled' ? results[2].value : { incoming: 0, outgoing: 0 }
       const branch = results[3].status === 'fulfilled' ? results[3].value : ''
       const gitLfs = results[4].status === 'fulfilled' ? results[4].value : false
+      const hasCommits = results[5].status === 'fulfilled' ? results[5].value : false
       const project = projects.find(item => item.path === directory)
       if (project && project.gitLfs !== gitLfs) { project.gitLfs = gitLfs; persistProjects() }
-      const update = { directory, projectIcon: findProjectIcon(directory), files, changes, incomingCommits: aheadBehind.incoming, outgoingCommits: aheadBehind.outgoing, branch, gitLfs, gitOk: results[1].status === 'fulfilled', reason, error: [scanError, gitError].filter(Boolean).join(' | ') || null, at: new Date().toISOString() }
+      const update = { directory, projectIcon: findProjectIcon(directory), files, changes, incomingCommits: aheadBehind.incoming, outgoingCommits: aheadBehind.outgoing, branch, gitLfs, hasCommits, gitOk: results[1].status === 'fulfilled', reason, error: [scanError, gitError].filter(Boolean).join(' | ') || null, at: new Date().toISOString() }
       sendRenderer('directory-update', update)
       return update
     }
@@ -427,14 +431,14 @@ ipcMain.handle('start-terminal', async (_, directory) => {
 ipcMain.handle('write-terminal', (_, data) => { if (terminalProcess && typeof data === 'string') terminalProcess.write(data); return true })
 ipcMain.handle('resize-terminal', (_, { cols, rows } = {}) => { if (terminalProcess) terminalProcess.resize(Math.max(20, Number(cols) || 120), Math.max(5, Number(rows) || 30)); return true })
 ipcMain.handle('stop-terminal', () => { stopTerminal(); return true })
-ipcMain.handle('commit-selected', async (_, { files, message }) => {
+ipcMain.handle('commit-selected', async (_, { files, message, amend = false }) => {
   if (!currentDirectory) throw new Error('No directory selected')
   const selected = Array.isArray(files) ? files.filter(file => typeof file === 'string' && file && !file.includes('..')) : []
   const commitMessage = String(message || '').trim()
   if (!selected.length) throw new Error('Select at least one file')
   if (!commitMessage) throw new Error('The commit message is empty')
   await new Promise((resolve, reject) => execFile('git', ['-C', currentDirectory, 'add', '--', ...selected], { windowsHide: true, timeout: 30000 }, (error, stdout, stderr) => error ? reject(new Error(stderr.trim() || error.message)) : resolve(stdout)))
-  const output = await new Promise((resolve, reject) => execFile('git', ['-C', currentDirectory, 'commit', '-m', commitMessage], { windowsHide: true, timeout: 30000 }, (error, stdout, stderr) => error ? reject(new Error(stderr.trim() || error.message)) : resolve(stdout.trim())))
+  const output = await new Promise((resolve, reject) => execFile('git', ['-C', currentDirectory, 'commit', ...(amend ? ['--amend'] : []), '-m', commitMessage], { windowsHide: true, timeout: 30000 }, (error, stdout, stderr) => error ? reject(new Error(stderr.trim() || error.message)) : resolve(stdout.trim())))
   await publish('post-commit')
   return { ok: true, output: String(output || '') }
 })

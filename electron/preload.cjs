@@ -20,7 +20,7 @@ contextBridge.exposeInMainWorld('directoryAPI', {
   getStashes: () => ipcRenderer.invoke('get-stashes'),
   stashSelected: (files, message) => ipcRenderer.invoke('stash-selected', { files, message }),
   openInExplorer: () => ipcRenderer.invoke('open-in-explorer'),
-  commitSelected: (files, message) => ipcRenderer.invoke('commit-selected', { files: Array.isArray(files) ? files.map(file => String(file)) : [], message: String(message || '') }),
+  commitSelected: (files, message, amend = false) => ipcRenderer.invoke('commit-selected', { files: Array.isArray(files) ? files.map(file => String(file)) : [], message: String(message || ''), amend: Boolean(amend) }),
   refresh: () => ipcRenderer.invoke('refresh'),
   runShellCommand: (command) => ipcRenderer.invoke('run-shell-command', command),
   startTerminal: (directory) => ipcRenderer.invoke('start-terminal', directory),
