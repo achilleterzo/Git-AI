@@ -92,7 +92,10 @@ aside { border-color:#30343a; background:#1b1e21 }
 .update-banner .primary { height:34px; white-space:nowrap; padding:0 12px }
 .update-close { width:24px; height:24px; padding:0; background:transparent; color:#aeb5bd; font-size:20px; font-weight:400; line-height:1 }
 .update-close:hover { color:#f3f4f6 }
-.update-pill { display:block; width:max-content; max-width:100%; margin-top:10px; padding:5px 9px; border:1px solid #4b716d; border-radius:999px; background:#202b2d; color:#9ff5e3; font-size:10px; font-weight:700; }
+.side-footer { display:flex; align-items:center; justify-content:space-between; gap:8px; min-width:0; }
+.side-footer-info { display:grid; gap:2px; min-width:0; }
+.side-footer-info strong { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#858c95; font-size:11px; font-weight:600; }
+.update-pill { display:block; flex:0 0 auto; width:max-content; max-width:100%; margin-top:0; padding:5px 9px; border:1px solid #4b716d; border-radius:999px; background:#202b2d; color:#9ff5e3; font-size:10px; font-weight:700; }
 .update-pill:hover { background:#293a3b; color:#d9fdf5 }
 .stash-path { border:1px solid #373b41; border-radius:8px; background:#202326; color:#e5e7eb; padding:11px 14px; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
 .stash-pending { border:1px solid #373b41; border-radius:10px; overflow:hidden; background:#202326 }.stash-section-title { display:flex; justify-content:space-between; padding:15px 18px; color:#e5e7eb }.stash-section-title span { color:#9da5ae; font-size:12px }
