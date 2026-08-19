@@ -400,6 +400,7 @@ aside { position:fixed; inset:0 auto 0 0; z-index:5; height:100vh; }
 .console-close-button { border-color:transparent; background:transparent }
 .console-close-button:hover { border-color:transparent; background:#30343a }
 .terminal-console { 
+	
 	flex:1; 
 	height:auto; 
 	min-height:0; 
