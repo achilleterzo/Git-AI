@@ -428,34 +428,64 @@ ipcMain.handle('generate-commit-message', async (_, { files, operation = 'commit
   if (!aiSettings?.endpoint || !aiSettings?.model) throw new Error('Configure the Ollama endpoint and model in Settings')
   const selected = Array.isArray(files) ? files.filter(file => typeof file === 'string' && file && !file.includes('..')) : []
   if (!selected.length) throw new Error('Select at least one file')
-  const diff = await new Promise((resolve, reject) => execFile('git', ['-C', currentDirectory, 'diff', 'HEAD', '--', ...selected], { windowsHide: true, timeout: 30000, maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => error ? reject(new Error(stderr.trim() || error.message)) : resolve(stdout)))
   const untracked = await new Promise(resolve => execFile('git', ['-C', currentDirectory, 'ls-files', '--others', '--exclude-standard', '--', ...selected], { windowsHide: true, timeout: 30000, maxBuffer: 8 * 1024 * 1024 }, (_, stdout) => resolve(stdout.split(/\r?\n/).filter(Boolean))))
-  const untrackedDiff = untracked.map(file => {
-    try {
-      const absolute = path.resolve(currentDirectory, file)
-      const content = fs.readFileSync(absolute, 'utf8').slice(0, 2 * 1024 * 1024)
-      return `\n--- /dev/null\n+++ b/${file}\n@@ new file @\n+${content.replace(/\r?\n/g, '\n+')}\n`
-    } catch { return `\n--- /dev/null\n+++ b/${file}\n[new binary or unreadable file]\n` }
-  }).join('')
-  const completeDiff = `${diff}${untrackedDiff}`
-  if (!completeDiff.trim()) throw new Error('No diff available for the selected files')
+  const fileList = await new Promise(resolve => execFile('git', ['-C', currentDirectory, 'status', '--short', '--', ...selected], { windowsHide: true, timeout: 30000, maxBuffer: 8 * 1024 * 1024 }, (_, stdout) => resolve(stdout)))
+  const diffStat = await new Promise(resolve => execFile('git', ['-C', currentDirectory, 'diff', 'HEAD', '--stat', '--', ...selected], { windowsHide: true, timeout: 30000, maxBuffer: 8 * 1024 * 1024 }, (_, stdout) => resolve(stdout)))
+  if (!fileList.trim() && !untracked.length) throw new Error('No diff available for the selected files')
+  const selectedSet = new Set(selected)
   const prompt = operation === 'stash' ? `TASK: Write exactly one Conventional Commits-style message for a work-in-progress stash.
-MANDATORY LANGUAGE: ${aiSettings.language}. The description MUST be written entirely in ${aiSettings.language}; do not use Italian or another language unless ${aiSettings.language} is Italian.
+MANDATORY LANGUAGE: ${aiSettings.language}. The description MUST be written entirely in ${aiSettings.language}.
 FORMAT: <type>(<scope>): <description>
 ALLOWED TYPES: wip, feat, fix, refactor, chore, docs, test
 OUTPUT RULES: Return one line only. No markdown, quotes, translation, explanation, prefix or suffix.
+Use get_file_diff for the relevant selected files and read_file only when needed. Cover the overall change, not just the last file. Return the message only after inspecting the relevant diffs.
 
-DIFF:
-${completeDiff}` : `TASK: Write exactly one Conventional Commits message.
-MANDATORY LANGUAGE: ${aiSettings.language}. The description MUST be written entirely in ${aiSettings.language}; do not use Italian or another language unless ${aiSettings.language} is Italian.
+SELECTED FILES AND STATUS:
+${fileList.slice(0, 8000)}
+
+DIFF STAT:
+${diffStat.slice(0, 4000)}` : `TASK: Write exactly one Conventional Commits message.
+MANDATORY LANGUAGE: ${aiSettings.language}. The description MUST be written entirely in ${aiSettings.language}.
 FORMAT: <type>(<scope>): <description>
 ALLOWED TYPES: feat, fix, refactor, chore, docs, test
 OUTPUT RULES: Return one line only. No markdown, quotes, translation, explanation, prefix or suffix.
+Use get_file_diff for the relevant selected files and read_file only when needed. Cover the overall change, not just the last file. Return the message only after inspecting the relevant diffs.
 
-DIFF:
-${completeDiff}`
-  const result = await requestGenerateWithThinking(aiSettings.endpoint, { model: aiSettings.model, prompt, stream: false })
-  const message = String(result.response || '').trim().split(/\r?\n/)[0].replace(/^['"`]+|['"`]+$/g, '').trim()
+SELECTED FILES AND STATUS:
+${fileList.slice(0, 8000)}
+
+DIFF STAT:
+${diffStat.slice(0, 4000)}`
+  const tools = [
+    { type: 'function', function: { name: 'get_file_diff', description: 'Get the diff for one selected repository-relative file.', parameters: { type: 'object', required: ['file'], properties: { file: { type: 'string' } } } } },
+    { type: 'function', function: { name: 'read_file', description: 'Read one selected repository-relative file only when its diff needs context.', parameters: { type: 'object', required: ['file'], properties: { file: { type: 'string' } } } } }
+  ]
+  const messages = [{ role: 'user', content: prompt }]
+  let finalContent = ''
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const result = await requestChatWithThinking(aiSettings.endpoint, { model: aiSettings.model, messages, tools, stream: false })
+    const assistant = result.message || {}
+    messages.push(assistant)
+    const calls = Array.isArray(assistant.tool_calls) ? assistant.tool_calls : []
+    if (!calls.length) { finalContent = String(assistant.content || '').trim(); break }
+    for (const call of calls) {
+      const name = call?.function?.name
+      const rawArgs = call?.function?.arguments
+      const args = typeof rawArgs === 'string' ? JSON.parse(rawArgs) : (rawArgs || {})
+      const file = String(args.file || '')
+      if (!selectedSet.has(file) || file.includes('..') || path.isAbsolute(file)) throw new Error('AI requested a file outside the selected changes')
+      let content = 'Unknown tool'
+      if (name === 'get_file_diff') {
+        content = untracked.includes(file)
+          ? (() => { try { return `New file ${file}:\n${fs.readFileSync(path.resolve(currentDirectory, file), 'utf8').slice(0, 16000)}` } catch { return 'New binary or unreadable file.' } })()
+          : await new Promise(resolve => execFile('git', ['-C', currentDirectory, 'diff', 'HEAD', '--unified=2', '--', file], { windowsHide: true, timeout: 30000, maxBuffer: 8 * 1024 * 1024 }, (_, stdout) => resolve(stdout || 'No diff available for this file.')))
+      } else if (name === 'read_file') {
+        try { content = fs.readFileSync(path.resolve(currentDirectory, file), 'utf8').slice(0, 12000) } catch { content = 'File is binary, unavailable or unreadable.' }
+      }
+      messages.push({ role: 'tool', tool_name: name, content: String(content).slice(0, 16000) })
+    }
+  }
+  const message = finalContent.split(/\r?\n/)[0].replace(/^['"`]+|['"`]+$/g, '').trim()
   if (!message) throw new Error('Ollama returned an empty commit message. Check the selected model and try again.')
   return message
 })
