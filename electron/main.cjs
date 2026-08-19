@@ -580,7 +580,9 @@ ${fileSummary.slice(0, 6000)}`
       messages.push({ role: 'tool', tool_name: name, content: String(content).slice(0, 16000) })
     }
   }
-  const raw = finalContent.replace(/^```json\s*|\s*```$/g, '')
+  const cleaned = finalContent.replace(/^```(?:json)?\s*|\s*```$/gi, '').trim()
+  const jsonMatch = cleaned.match(/\{[\s\S]*\}/)
+  const raw = jsonMatch ? jsonMatch[0] : cleaned
   try {
     const parsed = JSON.parse(raw)
     if (!/^v\d+\.\d+\.\d+$/.test(parsed.name) || !String(parsed.message || '').trim()) throw new Error()
