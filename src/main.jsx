@@ -8,6 +8,7 @@ import WatchingPill from './components/WatchingPill'
 import LfsPill from './components/LfsPill'
 import LfsPage from './pages/LfsPage'
 import HistoryPage from './pages/HistoryPage'
+import HomePage from './pages/HomePage'
 import TerminalConsole from './components/TerminalConsole'
 import ConfirmationModal from './components/ConfirmationModal'
 import SettingsModal from './components/SettingsModal'
@@ -70,6 +71,8 @@ function App() {
   const [operationProgress, setOperationProgress] = useState(null)
   const [operationPhase, setOperationPhase] = useState('')
   const [consoleLines, setConsoleLines] = useState([])
+  const [aiPromptLog, setAiPromptLog] = useState(null)
+  const [consoleTab, setConsoleTab] = useState('ai')
   const [consoleOpen, setConsoleOpen] = useState(false)
   const [consoleCommand, setConsoleCommand] = useState('')
   const [projectIcon, setProjectIcon] = useState(null)
@@ -82,9 +85,11 @@ function App() {
   const allSelected = allPaths.length > 0 && allPaths.every(path => selected.has(path))
   const allPartial = allPaths.some(path => selected.has(path)) && !allSelected
   async function runShellCommand(event) { event.preventDefault(); const command = consoleCommand.trim(); if (!command || !directory) return; setConsoleCommand(''); try { await window.directoryAPI.runShellCommand(command) } catch (error) { setConsoleLines(lines => [...lines, { at: new Date().toISOString(), message: `Error: ${error.message}` }].slice(-300)) } }
+  async function copyConsoleContent(kind) { const content = kind === 'request' ? (aiPromptLog ? JSON.stringify(aiPromptLog, null, 2) : 'No AI request recorded yet.') : (consoleLines.length ? consoleLines.map(line => `[${line.at ? new Date(line.at).toLocaleTimeString() : '--:--:--'}] ${line.message}`).join('\n') : 'No service log entries yet.'); try { await navigator.clipboard.writeText(content) } catch { setConsoleLines(lines => [...lines, { at: new Date().toISOString(), message: 'Could not copy console content.' }].slice(-300)) } }
 
   useEffect(() => { window.directoryAPI.getSettings().then(setSettings); window.directoryAPI.getAppVersion().then(version => { setAppVersion(version); window.directoryAPI.getLatestRelease().then(release => { if (release?.version && compareVersions(release.version, version) > 0) setUpdateRelease(release) }).catch(() => {}) }).catch(() => {}); window.directoryAPI.getProjects().then(async result => { const savedProjects = normalizeProjects(result); setProjects(savedProjects); const lastProject = savedProjects.slice().sort((a, b) => (b.lastOpened || 0) - (a.lastOpened || 0))[0]; if (lastProject?.lastOpened) await runOperation('Restoring project…', () => openSelectedDirectory(lastProject.path, lastProject)); else setView('home') }).catch(error => { setView('home'); setErrorModal(String(error?.message || error)) }); window.directoryAPI.onOpenSettings(() => setSettingsOpen(true)); window.directoryAPI.onOpenAbout(() => setAboutOpen(true)); return undefined }, [])
   useEffect(() => { window.directoryAPI.onOperationLog(data => setConsoleLines(lines => [...lines, { ...data, message: String(data?.message || '') }].slice(-300))); return undefined }, [])
+  useEffect(() => { window.directoryAPI.onAiPrompt(data => setAiPromptLog(data)); return undefined }, [])
   useEffect(() => { window.directoryAPI.onOperationProgress(data => { if (progressHandlerRef.current) progressHandlerRef.current(data) }); return undefined }, [])
   useEffect(() => { window.directoryAPI.onUpdate(data => {
     setFiles(data.files || [])
@@ -231,6 +236,16 @@ function App() {
     toggleSelection,
     openDiff,
   }
+  function renderPage() {
+    if (view === 'home') return <HomePage projects={projects} directory={directory} defaultPathIcon={defaultPathIcon} choose={choose} openHomeProject={openHomeProject} editProject={editProject} projectName={projectName} LfsPill={LfsPill} />
+    const pages = {
+      changes: <ChangesPage {...pageProps} />,
+      stash: <StashPage {...pageProps} stashes={stashes} />,
+      history: <HistoryPage {...pageProps} runOperation={runOperation} setErrorModal={setErrorModal} />,
+      lfs: <LfsPage {...pageProps} loading={loading} runOperation={runOperation} setErrorModal={setErrorModal} />,
+    }
+    return <><header className="page-header page-header-compact"><span className="eyebrow">WORKSPACE / MONITOR</span><WatchingPill active={active} starting={starting} directory={directory} stop={stop} resume={resume} /></header>{pages[view] || pages.changes}</>
+  }
 
   return (
     <main>
@@ -247,40 +262,7 @@ function App() {
       </aside>
 
       <section className="content">
-        {view === 'home' ? (
-          <div className="home-page">
-            <header>
-              <div>
-                <p className="eyebrow">WORKSPACE / HOME</p>
-                <h1>Projects</h1>
-                <p className="muted">Open one of your saved Git repositories.</p>
-              </div>
-            </header>
-            <div className="home-project-grid">
-              <button className="home-project-card new-project-card" onClick={choose}>
-                <span className="new-project-icon">＋</span>
-                <span>New project</span>
-                <small>Choose a directory</small>
-              </button>
-              {projects.slice().sort((a, b) => (b.lastOpened || 0) - (a.lastOpened || 0)).map(project => (
-                <div className={`home-project-card project-card ${project.path === directory ? 'active' : ''}`} key={project.path} title={project.path} onClick={() => openHomeProject(project)}>
-                  <div className="project-card-icon-row">
-                    <img src={project.icon || defaultPathIcon} alt="" />
-                    <LfsPill active={project.gitLfs === true} directory={project.path} />
-                  </div>
-                  <span>{projectName(project)}</span>
-                  <small>Open project</small>
-                  <button className="project-edit-button" title="Edit project" onClick={event => { event.stopPropagation(); editProject(project) }}>Edit</button>
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <>
-            <header className="page-header page-header-compact"><span className="eyebrow">WORKSPACE / MONITOR</span><WatchingPill active={active} starting={starting} directory={directory} stop={stop} resume={resume} /></header>
-            {view === 'changes' ? <ChangesPage {...pageProps} /> : view === 'stash' ? <StashPage {...pageProps} stashes={stashes} /> : view === 'history' ? <HistoryPage {...pageProps} runOperation={runOperation} setErrorModal={setErrorModal} /> : <LfsPage {...pageProps} loading={loading} runOperation={runOperation} setErrorModal={setErrorModal} />}
-          </>
-        )}
+        {renderPage()}
 
         {updateRelease && updateNoticeVisible && <div className="update-banner"><div><strong>Update available: v{updateRelease.version}</strong><span>You are using v{appVersion}.</span></div><button className="primary" onClick={() => window.directoryAPI.openRelease(updateRelease.url)}>Download latest build</button><button className="update-close" aria-label="Dismiss update" onClick={() => setUpdateNoticeVisible(false)}>×</button></div>}
         {settingsOpen && <SettingsModal settings={settings} setSettings={setSettings} models={models} modelsLoading={modelsLoading} loadModels={loadModels} save={saveAiSettings} onClose={() => setSettingsOpen(false)} />}
@@ -294,7 +276,7 @@ function App() {
         {revertConfirmation && <ConfirmationModal title="Revert selected files?" message="This permanently discards the selected changes and removes selected untracked files." danger details={<><div><span>FILES</span><strong>{selected.size}</strong></div><div><span>BRANCH</span><strong>{currentBranch || 'Unknown branch'}</strong></div></>} confirmLabel="Revert files" onCancel={() => setRevertConfirmation(false)} onConfirm={confirmRevert} />}
         {deleteStashConfirmation && <ConfirmationModal title={`Delete ${selectedStashes.length > 1 ? 'stashes' : 'stash'}?`} message={`This permanently deletes the selected stash${selectedStashes.length > 1 ? 'es' : ''} and all files stored in them.`} danger confirmLabel={`Delete ${selectedStashes.length > 1 ? 'stashes' : 'stash'}`} onCancel={() => setDeleteStashConfirmation(false)} onConfirm={confirmDeleteStash} />}
         {branchSwitchRequest && <ConfirmationModal title="Uncommitted changes" message="You have local changes. Stash them before switching branches?" details={<><div><span>CURRENT BRANCH</span><strong>{currentBranch || 'Unknown branch'}</strong></div><div><span>CHANGES</span><strong>{changes.length}</strong></div><div><span>TARGET</span><strong>{branchSwitchRequest.newBranch || branchSwitchRequest.target}</strong></div></>} confirmLabel="Stash and switch" onCancel={() => setBranchSwitchRequest(null)} onConfirm={() => executeBranchSwitch(branchSwitchRequest, true)} />}
-        <div className={`modal-backdrop ${consoleOpen ? '' : 'console-modal-hidden'}`} onClick={() => setConsoleOpen(false)}><div className="modal console-modal" onClick={event => event.stopPropagation()}><div className="console-modal-head"><span className="eyebrow ml-2">CONSOLE</span><button className="console-close-button" title="Close console" aria-label="Close console" onClick={() => setConsoleOpen(false)}>×</button></div><TerminalConsole directory={directory} visible={consoleOpen} /></div></div>
+        <div className={`modal-backdrop ${consoleOpen ? '' : 'console-modal-hidden'}`} onClick={() => setConsoleOpen(false)}><div className="modal console-modal" onClick={event => event.stopPropagation()}><div className="console-modal-head"><span className="eyebrow ml-2">CONSOLE</span><div className="console-head-actions"><button className="ghost console-copy-button" onClick={() => copyConsoleContent(consoleTab === 'ai' ? 'request' : 'service')} title="Copy active tab" aria-label="Copy active tab"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="8" y="8" width="11" height="11" rx="2" /><path d="M5 16V6a2 2 0 0 1 2-2h10" /></svg></button><button className="console-close-button" title="Close console" aria-label="Close console" onClick={() => setConsoleOpen(false)}>×</button></div></div><div className="console-layout"><nav className="console-menu"><button className={consoleTab === 'ai' ? 'active' : ''} onClick={() => setConsoleTab('ai')}>Last request</button><button className={consoleTab === 'service' ? 'active' : ''} onClick={() => setConsoleTab('service')}>Service log</button><button className={consoleTab === 'shell' ? 'active' : ''} onClick={() => setConsoleTab('shell')}>Shell</button>{window.directoryAPI.isDevelopment && <button onClick={() => window.directoryAPI.openDevTools()}>Developer tools</button>}</nav><section className="console-panel">{consoleTab === 'ai' && <pre>{aiPromptLog ? JSON.stringify(aiPromptLog, null, 2) : 'No AI prompt recorded yet.'}</pre>}{consoleTab === 'service' && <pre>{consoleLines.length ? consoleLines.map(line => `[${line.at ? new Date(line.at).toLocaleTimeString() : '--:--:--'}] ${line.message}`).join('\n') : 'No service log entries yet.'}</pre>}<div className={consoleTab === 'shell' ? 'console-shell-visible' : 'console-shell-hidden'}><TerminalConsole directory={directory} visible={consoleOpen && consoleTab === 'shell'} /></div></section></div></div></div>
         {diffModal && <div className="modal-backdrop" onClick={() => setDiffModal(null)}><div className="modal diff-modal" onClick={event => event.stopPropagation()}><h2>Diff</h2><p className="muted">{diffModal.file}</p><pre>{diffModal.diff}</pre><div className="modal-actions"><button className="primary" onClick={() => setDiffModal(null)}>Close</button></div></div></div>}
         {(settingsOpen || aiMessage || aiError) && <div className="modal-backdrop" onClick={() => { if (!aiBusy) { setSettingsOpen(false); setAiMessage(''); setAiError('') } }}><div className="modal" onClick={event => event.stopPropagation()}>{settingsOpen ? <><h2>AI Settings</h2><p className="muted">Configure Ollama to generate commit messages.</p><label>Ollama endpoint<input value={settings.endpoint} onChange={event => setSettings({ ...settings, endpoint: event.target.value })} /></label><label>Model<select value={settings.model} onChange={event => setSettings({ ...settings, model: event.target.value })}><option value="">Select a model</option>{settings.model && !models.includes(settings.model) && <option value={settings.model}>{settings.model}</option>}{models.map(model => <option key={model} value={model}>{model}</option>)}</select></label><label>Message language<select value={settings.language} onChange={event => setSettings({ ...settings, language: event.target.value })}>{['English', 'Italian', 'Spanish', 'French', 'German', 'Portuguese', 'Chinese', 'Japanese'].map(language => <option key={language} value={language}>{language}</option>)}</select></label><div className="modal-actions"><button className="ghost" onClick={() => loadModels()} disabled={modelsLoading}>{modelsLoading ? 'Loading…' : 'Load models'}</button><button className="primary" onClick={saveAiSettings}>Save</button></div>{aiError && <p className="modal-error">{aiError}</p>}</> : <><h2>{pendingOperation === 'stash-merge' ? 'Merge stash message' : pendingOperation === 'stash' ? 'Stash message' : pendingOperation === 'amend' ? 'Amend commit message' : 'Commit message'}</h2><textarea value={aiMessage} onChange={event => setAiMessage(event.target.value)} /><div className="modal-actions"><button className="ghost" onClick={() => { setAiMessage(''); setAiError('') }}>Close</button>{aiError && <button className="ghost" onClick={() => pendingOperation === 'stash-merge' ? generateStashMergeMessage() : generateCommitMessage(pendingOperation)} disabled={aiBusy}>{aiBusy ? 'Retrying…' : 'Retry'}</button>}{pendingOperation === 'stash-merge' ? <button className="primary" onClick={mergeStashes} disabled={aiBusy || !aiMessage.trim()}>Merge stashes</button> : pendingOperation === 'stash' ? <button className="primary" onClick={stashSelected} disabled={aiBusy || !aiMessage.trim()}>Stash</button> : <button className="primary" onClick={commitSelected} disabled={aiBusy || !aiMessage.trim()}>{pendingOperation === 'amend' ? 'Amend commit' : 'Commit'}</button>}</div></>}</div></div>}
       </section>

@@ -61,4 +61,7 @@ contextBridge.exposeInMainWorld('directoryAPI', {
   onUpdate: (callback) => { ipcRenderer.on('directory-update', (_, data) => callback(data)) }
   ,onOperationLog: (callback) => { ipcRenderer.on('operation-log', (_, data) => callback(data)) }
   ,onOperationProgress: (callback) => { ipcRenderer.on('operation-progress', (_, data) => callback(data)) }
+  ,onAiPrompt: (callback) => { ipcRenderer.on('ai-prompt-log', (_, data) => callback(data)) }
+  ,isDevelopment: process.defaultApp === true
+  ,openDevTools: () => ipcRenderer.invoke('open-devtools')
 })

@@ -75,6 +75,7 @@ function requestJson(urlString, options = {}, body = null) {
     const url = new URL(urlString)
     const client = url.protocol === 'https:' ? https : http
     console.log('[Ollama] request', JSON.stringify({ url: urlString, method: options.method || 'GET', payload: body }, null, 2))
+    if (/\/api\/(chat|generate)$/.test(url.pathname)) sendRenderer('ai-prompt-log', { at: new Date().toISOString(), url: urlString, payload: body })
     const request = client.request(url, { method: options.method || 'GET', headers: { ...(body ? { 'Content-Type': 'application/json' } : {}) }, timeout: 120000 }, response => {
       let data = ''
       response.setEncoding('utf8')
@@ -387,7 +388,7 @@ async function startWatching(directory) {
   await publish('started', generation)
 }
 function openDirectory() { dialog.showOpenDialog(win, { properties: ['openDirectory'] }).then(result => { if (result.filePaths[0]) startWatching(result.filePaths[0]) }) }
-function buildMenu() { Menu.setApplicationMenu(Menu.buildFromTemplate([{ label: 'File', submenu: [{ label: 'Open directory…', accelerator: 'CmdOrCtrl+O', click: openDirectory }, { label: 'Refresh Git status', accelerator: 'CmdOrCtrl+R', click: () => publish('manual-refresh') }, { type: 'separator' }, { label: 'Settings…', click: () => win.webContents.send('open-settings') }, { label: 'About Pulse Git AI', click: () => win.webContents.send('open-about') }, { type: 'separator' }, { role: 'quit' }] }, { label: 'View', submenu: [{ role: 'reload' }, { role: 'toggledevtools' }] }])) }
+function buildMenu() { Menu.setApplicationMenu(Menu.buildFromTemplate([{ label: 'File', submenu: [{ label: 'Open directory…', accelerator: 'CmdOrCtrl+O', click: openDirectory }, { label: 'Refresh Git status', accelerator: 'CmdOrCtrl+R', click: () => publish('manual-refresh') }, { type: 'separator' }, { label: 'Settings…', click: () => win.webContents.send('open-settings') }, { label: 'About Pulse Git AI', click: () => win.webContents.send('open-about') }, { type: 'separator' }, { role: 'quit' }] }])) }
 
 ipcMain.handle('choose-directory', async (_, initialPath) => { const fallback = projects.slice().sort((a, b) => (b.lastOpened || 0) - (a.lastOpened || 0))[0]?.path; const defaultPath = [initialPath, lastDirectoryDialogPath, currentDirectory, fallback].find(value => value && fs.existsSync(value)); const result = await dialog.showOpenDialog(win, { defaultPath, properties: ['openDirectory'] }); const selected = result.filePaths[0] || null; if (selected) { lastDirectoryDialogPath = selected; saveDialogState() } return selected })
 ipcMain.handle('choose-project-icon', async (_, projectDirectory) => { const defaultPath = projectDirectory && fs.existsSync(projectDirectory) ? projectDirectory : undefined; const result = await dialog.showOpenDialog(win, { defaultPath, properties: ['openFile'], filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'ico', 'svg'] }] }); return result.filePaths[0] ? readIconFile(result.filePaths[0]) : null })
@@ -418,6 +419,7 @@ ipcMain.handle('checkout-repository', async (_, { directory, remote }) => {
 ipcMain.handle('git-changes', () => currentDirectory ? gitChanges(currentDirectory) : [])
 ipcMain.handle('get-settings', () => aiSettings)
 ipcMain.handle('get-app-version', () => app.getVersion())
+ipcMain.handle('open-devtools', () => { if (!app.isPackaged && win && !win.isDestroyed()) win.webContents.openDevTools({ mode: 'detach' }); return !app.isPackaged })
 ipcMain.handle('get-latest-release', async () => { try { return await fetchLatestRelease() } catch (error) { console.error('[Update] release check failed', error.message); throw error } })
 ipcMain.handle('open-release', (_, url) => { if (typeof url === 'string' && /^https:\/\/github\.com\//.test(url)) return shell.openExternal(url); return false })
 ipcMain.handle('save-settings', (_, settings) => saveSettings(settings))
@@ -433,12 +435,11 @@ ipcMain.handle('generate-commit-message', async (_, { files, operation = 'commit
   const diffStat = await new Promise(resolve => execFile('git', ['-C', currentDirectory, 'diff', 'HEAD', '--stat', '--', ...selected], { windowsHide: true, timeout: 30000, maxBuffer: 8 * 1024 * 1024 }, (_, stdout) => resolve(stdout)))
   if (!fileList.trim() && !untracked.length) throw new Error('No diff available for the selected files')
   const selectedSet = new Set(selected)
-  const prompt = operation === 'stash' ? `TASK: Write exactly one Conventional Commits-style message for a work-in-progress stash.
+  const prompt = operation === 'stash' ? `TASK: Write a short label for temporary, unfinished work that is being saved in a Git stash.
 MANDATORY LANGUAGE: ${aiSettings.language}. The description MUST be written entirely in ${aiSettings.language}.
-FORMAT: <type>(<scope>): <description>
-ALLOWED TYPES: wip, feat, fix, refactor, chore, docs, test
-OUTPUT RULES: Return one line only. No markdown, quotes, translation, explanation, prefix or suffix.
-Use get_file_diff for the relevant selected files and read_file only when needed. Cover the overall change, not just the last file. Return the message only after inspecting the relevant diffs.
+FORMAT: Natural language, optionally beginning with the lowercase prefix "wip:".
+OUTPUT RULES: Return one line only. This is a stash label, not a commit message: do not use Conventional Commits syntax, type/scope prefixes, uppercase labels, release language, imperative commit wording, markdown, quotes or explanation. Emphasize that the work is temporary or unfinished and summarize the complete selected change set.
+Use get_file_diff for the relevant selected files and read_file only when needed. Inspect enough files to describe the whole work in progress.
 
 SELECTED FILES AND STATUS:
 ${fileList.slice(0, 8000)}
