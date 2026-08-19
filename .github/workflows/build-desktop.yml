@@ -41,23 +41,7 @@ jobs:
           set -euo pipefail
 
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            release_tag="${{ github.ref_name }}"
-            version="${release_tag#v}"
-
-            # The tag is the release trigger. Keep the repository version files
-            # synchronized afterwards on main without creating another release run.
-            git fetch origin main
-            git checkout -B main origin/main
-            npm version "$version" --no-git-tag-version --no-commit-hooks >/dev/null
-            if ! git diff --quiet -- package.json package-lock.json; then
-              git config user.name "github-actions[bot]"
-              git config user.email "github-actions[bot]@users.noreply.github.com"
-              git add package.json package-lock.json
-              git commit -m "chore(release): $release_tag"
-              git push origin main
-            fi
-
-            echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+            echo "release_tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -140,7 +124,9 @@ jobs:
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run build:desktop:ci -- ${{ matrix.build_args }}
+        run: |
+          rm -rf release
+          npm run build:desktop:ci -- ${{ matrix.build_args }}
 
       - name: Upload desktop artifact
         uses: actions/upload-artifact@v6
