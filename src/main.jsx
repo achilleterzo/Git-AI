@@ -42,7 +42,7 @@ function App() {
   const [lfsToggleConfirmation, setLfsToggleConfirmation] = useState(null)
   const [emptyDirectory, setEmptyDirectory] = useState('')
   const [checkoutRemote, setCheckoutRemote] = useState('')
-  const [settings, setSettings] = useState({ aiEnabled: false, endpoint: 'http://localhost:11434', model: '', language: 'English' })
+  const [settings, setSettings] = useState({ aiEnabled: false, endpoint: 'http://localhost:11434', model: '', language: 'English', reasoning: 'instant' })
   const [models, setModels] = useState([])
   const [modelsLoading, setModelsLoading] = useState(false)
   const [aiBusy, setAiBusy] = useState(false)
@@ -63,6 +63,7 @@ function App() {
   const [diffModal, setDiffModal] = useState(null)
   const [view, setView] = useState('home')
   const [stashes, setStashes] = useState([])
+  const [pendingCommitCount, setPendingCommitCount] = useState(0)
   const [selectedStashes, setSelectedStashes] = useState([])
   const [expandedStashRef, setExpandedStashRef] = useState('')
   const [loading, setLoading] = useState('')
@@ -111,6 +112,7 @@ function App() {
     else if (['git-pull', 'git-push', 'post-commit'].includes(data.reason)) setLastEvent(data.reason === 'post-commit' ? 'Commit completed' : data.reason === 'git-push' ? 'Push completed' : 'Pull completed')
   }) }, [])
   useEffect(() => { if (view === 'stash' && directory) window.directoryAPI.getStashes().then(setStashes).catch(error => setErrorModal(error.message)) }, [view, directory, active])
+  useEffect(() => { if (directory) window.directoryAPI.getPendingCommits().then(commits => setPendingCommitCount(Array.isArray(commits) ? commits.length : 0)).catch(() => setPendingCommitCount(0)) }, [directory, active, view])
   useEffect(() => { if (view === 'lfs' && !gitLfs) setView('changes') }, [view, gitLfs])
   useEffect(() => { if (projectModal && projectDraft.path) window.directoryAPI.getProjectIcon(projectDraft.path).then(icon => setProjectDraft(value => value.path === projectDraft.path && !value.icon ? { ...value, icon } : value)).catch(() => {}) }, [projectModal, projectDraft.path])
   useEffect(() => { if (!updateRelease) return undefined; setUpdateNoticeVisible(true); const timer = setTimeout(() => setUpdateNoticeVisible(false), 9000); return () => clearTimeout(timer) }, [updateRelease])
@@ -159,6 +161,7 @@ function App() {
   function toggleFolder(path) { setExpanded(value => { const next = new Set(value); next.has(path) ? next.delete(path) : next.add(path); return next }) }
   function expandAllFolders() { setExpanded(value => new Set([...value, ...changes.flatMap(change => { const parts = change.file.replaceAll('\\', '/').split('/').filter(Boolean); return parts.slice(0, -1).map((_, index) => parts.slice(0, index + 1).join('/')) })])) }
   function collapseAllFolders() { setExpanded(new Set()) }
+  async function refreshPendingCommitCount() { try { const commits = await window.directoryAPI.getPendingCommits(); setPendingCommitCount(Array.isArray(commits) ? commits.length : 0) } catch { setPendingCommitCount(0) } }
   function toggleSelection(paths) { setSelected(value => { const next = new Set(value); const all = paths.every(path => next.has(path)); paths.forEach(path => all ? next.delete(path) : next.add(path)); return next }) }
   async function loadModels(endpoint = settings.endpoint) { setAiError(''); setModelsLoading(true); try { const result = await window.directoryAPI.fetchModels(endpoint); setModels(value => settings.model && !result.includes(settings.model) ? [settings.model, ...result] : result); if (!settings.model && result[0]) setSettings(value => ({ ...value, model: result[0] })); return result } catch (error) { setAiError(error.message); return null } finally { setModelsLoading(false) } }
   async function saveAiSettings() { setAiError(''); try { await window.directoryAPI.saveSettings(settings); setSettingsOpen(false) } catch (error) { setErrorModal(error.message) } }
@@ -224,6 +227,7 @@ function App() {
     toggleFolder,
     expandAllFolders,
     collapseAllFolders,
+    refreshPendingCommitCount,
     toggleSelection,
     openDiff,
   }
@@ -238,7 +242,7 @@ function App() {
         <div className={`nav ${view === 'changes' ? 'active' : ''}`} onClick={() => setView('changes')}><i className="nav-icon changes-nav-icon" /><span>File changes</span><b className="nav-count">{cappedCount(changes.length)}</b></div>
         <div className={`nav ${view === 'stash' ? 'active' : ''}`} onClick={() => setView('stash')}><i className="nav-icon stash-nav-icon" /><span>Stash</span><b className="nav-count">{cappedCount(stashes.length)}</b></div>
         {gitLfs && <div className={`nav ${view === 'lfs' ? 'active' : ''}`} onClick={() => setView('lfs')}><i className="nav-icon lfs-nav-icon" /><span>LFS</span></div>}
-        <div className={`nav ${view === 'history' ? 'active' : ''}`} onClick={() => setView('history')}><i className="nav-icon history-nav-icon" /><span>History</span></div>
+        <div className={`nav ${view === 'history' ? 'active' : ''}`} onClick={() => setView('history')}><i className="nav-icon history-nav-icon" /><span>History</span><b className="nav-count">{cappedCount(pendingCommitCount)}</b></div>
         <div className="side-footer"><div className="side-footer-info"><strong>Pulse Git AI</strong><span>v{appVersion} · ready</span></div>{updateRelease && <button className="update-pill" onClick={() => window.directoryAPI.openRelease(updateRelease.url)}>Update v{updateRelease.version}</button>}</div>
       </aside>
 

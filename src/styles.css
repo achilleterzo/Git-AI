@@ -171,7 +171,9 @@ aside { border-color:#30343a; background:#1b1e21 }
 .history-page { display:flex; flex-direction:column; }
 .history-toolbar { display:flex; align-items:flex-start; justify-content:space-between; gap:18px; }
 .history-toolbar h1 { margin:0 0 5px; font-size:20px; }
-.pending-commits { padding:16px; border:1px solid #4b716d; border-radius:10px; background:#203a38; }
+.history-section { margin-bottom:18px; }
+.history-section:last-child { margin-bottom:0; }
+.pending-commits { margin-bottom:18px; padding:16px; border:1px solid #4b716d; border-radius:10px; background:#203a38; }
 .history-section-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:10px; }
 .history-section-head h2 { margin:0 0 4px; font-size:15px; }
 .history-section-head > span { color:#5eead4; font-size:11px; }
