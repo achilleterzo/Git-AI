@@ -46,13 +46,29 @@ function saveDialogState() { fs.mkdirSync(app.getPath('userData'), { recursive: 
 function loadProjects() { try { return JSON.parse(fs.readFileSync(projectsPath(), 'utf8')).map(project => typeof project === 'string' ? { path: project, icon: findProjectIcon(project), lastOpened: 0 } : { lastOpened: 0, ...project }).filter(project => typeof project?.path === 'string' && project.path && fs.existsSync(project.path)) } catch { return [] } }
 function persistProjects() { fs.mkdirSync(app.getPath('userData'), { recursive: true }); fs.writeFileSync(projectsPath(), JSON.stringify(projects, null, 2)) }
 function loadSettings() {
-  try { return { aiEnabled: false, endpoint: 'http://localhost:11434', model: '', language: 'English', ...JSON.parse(fs.readFileSync(settingsPath(), 'utf8')) } } catch { return { aiEnabled: false, endpoint: 'http://localhost:11434', model: '', language: 'English' } }
+  try { return { aiEnabled: false, endpoint: 'http://localhost:11434', model: '', language: 'English', reasoning: 'instant', ...JSON.parse(fs.readFileSync(settingsPath(), 'utf8')) } } catch { return { aiEnabled: false, endpoint: 'http://localhost:11434', model: '', language: 'English', reasoning: 'instant' } }
 }
 function saveSettings(settings) {
-  aiSettings = { aiEnabled: settings.aiEnabled === true, endpoint: String(settings.endpoint || '').replace(/\/$/, ''), model: String(settings.model || ''), language: String(settings.language || 'English') }
+  aiSettings = { aiEnabled: settings.aiEnabled === true, endpoint: String(settings.endpoint || '').replace(/\/$/, ''), model: String(settings.model || ''), language: String(settings.language || 'English'), reasoning: ['instant', 'low', 'medium', 'high'].includes(settings.reasoning) ? settings.reasoning : 'instant' }
   fs.mkdirSync(app.getPath('userData'), { recursive: true })
   fs.writeFileSync(settingsPath(), JSON.stringify(aiSettings, null, 2))
   return aiSettings
+}
+function thinkingPayload() {
+  const reasoning = aiSettings?.reasoning || 'instant'
+  return reasoning === 'instant' ? { think: false } : { think: reasoning }
+}
+async function requestChatWithThinking(endpoint, body) {
+  try { return await requestJson(`${endpoint}/api/chat`, { method: 'POST' }, { ...body, ...thinkingPayload() }) } catch (error) {
+    if ((aiSettings?.reasoning || 'instant') === 'instant') throw error
+    return requestJson(`${endpoint}/api/chat`, { method: 'POST' }, { ...body, think: true })
+  }
+}
+async function requestGenerateWithThinking(endpoint, body) {
+  try { return await requestJson(`${endpoint}/api/generate`, { method: 'POST' }, { ...body, ...thinkingPayload() }) } catch (error) {
+    if ((aiSettings?.reasoning || 'instant') === 'instant') throw error
+    return requestJson(`${endpoint}/api/generate`, { method: 'POST' }, { ...body, think: true })
+  }
 }
 function requestJson(urlString, options = {}, body = null) {
   return new Promise((resolve, reject) => {
@@ -438,7 +454,7 @@ OUTPUT RULES: Return one line only. No markdown, quotes, translation, explanatio
 
 DIFF:
 ${completeDiff}`
-  const result = await requestJson(`${aiSettings.endpoint}/api/generate`, { method: 'POST' }, { model: aiSettings.model, prompt, stream: false })
+  const result = await requestGenerateWithThinking(aiSettings.endpoint, { model: aiSettings.model, prompt, stream: false })
   const message = String(result.response || '').trim().split(/\r?\n/)[0].replace(/^['"`]+|['"`]+$/g, '').trim()
   if (!message) throw new Error('Ollama returned an empty commit message. Check the selected model and try again.')
   return message
@@ -490,16 +506,50 @@ ipcMain.handle('generate-release-tag', async () => {
   const base = await runGit(currentDirectory, ['describe', '--tags', '--abbrev=0']).catch(() => '')
   const range = base ? `${base}..HEAD` : 'HEAD'
   const changes = await runGit(currentDirectory, ['log', range, '--format=%s%n%b']).catch(() => '')
+  const fileSummary = await runGit(currentDirectory, ['diff', '--stat', range]).catch(() => '')
+  const fileChanges = await runGit(currentDirectory, ['log', range, '--name-status', '--format=--- %h %s']).catch(() => '')
   const changeSummary = changes.trim() || 'No new commits were found since the latest tag. Propose the next patch release only if the user explicitly wants to create one.'
-  const prompt = `TASK: Propose a release tag for the following Git changes.
+  const prompt = `TASK: Propose a release tag and a complete release message for ALL Git changes shown below.
 Return ONLY valid JSON with exactly these fields:
 {"name":"v1.5.0","message":"Release v1.5.0"}
-The name MUST be a semantic version tag starting with v. Increment the latest version ${base || 'v0.0.0'} according to the changes. The message must be concise and written in ${aiSettings.language}.
+The name MUST be a semantic version tag starting with v. Increment the latest version ${base || 'v0.0.0'} according to the complete change set. The message must summarize all important user-visible changes, fixes and technical improvements, not just the last commit. Write it in ${aiSettings.language}.
+The initial context contains summaries only. Use get_file_diff for relevant changed files and read_file only when the diff needs additional context. Inspect enough files to cover the complete change set, but do not read every full file by default.
 
-CHANGES:
-${changeSummary.slice(0, 12000)}`
-  const result = await requestJson(`${aiSettings.endpoint}/api/generate`, { method: 'POST' }, { model: aiSettings.model, prompt, stream: false })
-  const raw = String(result.response || '').trim().replace(/^```json\s*|\s*```$/g, '')
+COMMITS AND MESSAGES:
+${changeSummary.slice(0, 18000)}
+
+FILES CHANGED:
+${fileChanges.slice(0, 18000)}
+
+DIFF STAT:
+${fileSummary.slice(0, 6000)}`
+  const tools = [
+    { type: 'function', function: { name: 'get_file_diff', description: 'Get the release diff for one changed repository-relative file.', parameters: { type: 'object', required: ['file'], properties: { file: { type: 'string' } } } } },
+    { type: 'function', function: { name: 'read_file', description: 'Read one changed repository-relative file when its diff is insufficient.', parameters: { type: 'object', required: ['file'], properties: { file: { type: 'string' } } } } }
+  ]
+  const messages = [{ role: 'user', content: prompt }]
+  let finalContent = ''
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const result = await requestChatWithThinking(aiSettings.endpoint, { model: aiSettings.model, messages, tools, stream: false })
+    const assistant = result.message || {}
+    messages.push(assistant)
+    const calls = Array.isArray(assistant.tool_calls) ? assistant.tool_calls : []
+    if (!calls.length) { finalContent = String(assistant.content || '').trim(); break }
+    for (const call of calls) {
+      const name = call?.function?.name
+      const rawArgs = call?.function?.arguments
+      const args = typeof rawArgs === 'string' ? JSON.parse(rawArgs) : (rawArgs || {})
+      const file = String(args.file || '')
+      if (!file || file.includes('..') || path.isAbsolute(file)) throw new Error('AI requested an invalid repository file')
+      let content = 'Unknown tool'
+      if (name === 'get_file_diff') content = await runGit(currentDirectory, ['diff', range, '--no-ext-diff', '--unified=2', '--', file]).catch(() => 'No diff available for this file.')
+      if (name === 'read_file') {
+        try { content = fs.readFileSync(path.resolve(currentDirectory, file), 'utf8').slice(0, 12000) } catch { content = 'File is binary, unavailable or unreadable.' }
+      }
+      messages.push({ role: 'tool', tool_name: name, content: String(content).slice(0, 16000) })
+    }
+  }
+  const raw = finalContent.replace(/^```json\s*|\s*```$/g, '')
   try {
     const parsed = JSON.parse(raw)
     if (!/^v\d+\.\d+\.\d+$/.test(parsed.name) || !String(parsed.message || '').trim()) throw new Error()
@@ -663,7 +713,7 @@ OUTPUT RULES: Return one line only. No markdown, quotes, explanation, prefix or 
 
 STASH MESSAGES:
 ${messages.join('\n')}`
-  const result = await requestJson(`${aiSettings.endpoint}/api/generate`, { method: 'POST' }, { model: aiSettings.model, prompt, stream: false })
+  const result = await requestGenerateWithThinking(aiSettings.endpoint, { model: aiSettings.model, prompt, stream: false })
   const message = String(result.response || '').trim().split(/\r?\n/)[0].replace(/^['"`]+|['"`]+$/g, '').trim()
   if (!message) throw new Error('Ollama returned an empty stash merge message.')
   return message
