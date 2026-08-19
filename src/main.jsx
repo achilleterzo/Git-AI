@@ -185,7 +185,7 @@ function App() {
   async function runGitRemote(action, confirmed = false) { if (action === 'push' && !confirmed) { if (!directory || gitBusy || outgoingCommits < 1) return; setPushConfirmation(true); return } setGitBusy(true); try { const result = await runOperation(action === 'push' ? 'Pushing changes…' : 'Pulling changes…', () => action === 'pull' ? window.directoryAPI.gitPull() : window.directoryAPI.gitPush(), { trackProgress: true }); setLastEvent(result || `${action === 'push' ? 'Push' : 'Pull'} completed`) } catch (error) { setErrorModal(error.message) } finally { setGitBusy(false) } }
   async function handleBranchSwitch(request) { if (request?.error) { setErrorModal(request.error); return } if (changes.length > 0) { setBranchSwitchRequest(request); return } await executeBranchSwitch(request, false) }
   async function executeBranchSwitch(request, stash) { setBranchSwitchRequest(null); try { await runOperation(stash ? 'Stashing changes and switching branch…' : 'Switching branch…', () => window.directoryAPI.switchBranch({ ...request, stash })); setSelected(new Set()) } catch (error) { setErrorModal(error.message) } }
-  async function confirmPush() { setPushConfirmation(false); await runGitRemote('push', true) }
+  async function confirmPush() { setPushConfirmation(false); await runGitRemote('push', true); await refreshPendingCommitCount() }
   // File listing rendering lives in FilesTable.
 
   const pageProps = {
