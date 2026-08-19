@@ -39,7 +39,7 @@ export default function TerminalConsole({ directory, visible = true }) {
 
   useEffect(() => {
     if (!visible || !terminalRef.current) return undefined
-    const timer = requestAnimationFrame(() => { fitRef.current?.fit(); terminalRef.current?.focus() })
+    const timer = requestAnimationFrame(() => { fitRef.current?.fit(); terminalRef.current?.focus(); requestAnimationFrame(() => terminalRef.current?.focus()) })
     return () => cancelAnimationFrame(timer)
   }, [visible])
 
