@@ -3,7 +3,7 @@ import ProjectToolbar from '../components/ProjectToolbar'
 import RepositoryActionsBar from '../components/RepositoryActionsBar'
 import FilesTable from '../components/FilesTable'
 
-export default function StashPage({ directory, projects, choose, selectProject, removeProjectOption, active, stop, resume, defaultPathIcon, currentBranch, gitLfs, onBranchSwitch, incomingCommits, outgoingCommits, selected, aiBusy, gitBusy, generateCommitMessage, generateStashMergeMessage, mergeStashes, runGitRemote, requestPush, requestDeleteStash, selectedStashes, restoreStash, changes, query, setQuery, expanded, toggleFolder, toggleSelection, openDiff, stashes, setSelectedStashes, expandedStashRef, setExpandedStashRef }) {
+export default function StashPage({ directory, projects, choose, selectProject, removeProjectOption, active, stop, resume, defaultPathIcon, currentBranch, gitLfs, onBranchSwitch, incomingCommits, outgoingCommits, selected, aiBusy, gitBusy, generateCommitMessage, generateStashMergeMessage, mergeStashes, runGitRemote, requestPush, requestDeleteStash, selectedStashes, restoreStash, changes, query, setQuery, expanded, toggleFolder, toggleSelection, expandAllFolders, collapseAllFolders, openDiff, stashes, setSelectedStashes, expandedStashRef, setExpandedStashRef }) {
   const [stashFileSelected, setStashFileSelected] = useState(new Set())
   const [stashFileExpanded, setStashFileExpanded] = useState(new Set(['']))
 
@@ -33,7 +33,7 @@ export default function StashPage({ directory, projects, choose, selectProject, 
     <div className="tab-page stash-page">
       <ProjectToolbar {...{ directory, projects, choose, selectProject, removeProjectOption, active, stop, resume, defaultPathIcon }} />
       <RepositoryActionsBar {...{ directory, currentBranch, gitLfs, onBranchSwitch, incomingCommits, outgoingCommits, selected, aiBusy, gitBusy, generateCommitMessage, generateStashMergeMessage, mergeStashes, runGitRemote, requestPush, requestDeleteStash, selectedStashes, selectedStashFiles: [...stashFileSelected], restoreStash: restoreSelectedStash }} showStashOutside showRestore showDeleteStash showRevert={false} />
-      {changes.length > 0 && <FilesTable {...{ changes, query, selected, expanded, toggleFolder, toggleSelection, openDiff }} variant="stash" onQueryChange={setQuery} />}
+      {changes.length > 0 && <FilesTable {...{ changes, query, selected, expanded, toggleFolder, toggleSelection, expandAllFolders, collapseAllFolders, openDiff }} variant="stash" onQueryChange={setQuery} />}
       {!directory ? (
         <div className="empty"><div>—</div><h3>No project selected</h3><p>Select a project to view its stashes.</p></div>
       ) : !stashes.length ? (

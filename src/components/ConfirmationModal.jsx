@@ -1,0 +1,3 @@
+export default function ConfirmationModal({ title, message, details, confirmLabel = 'Confirm', cancelLabel = 'Cancel', danger = false, onConfirm, onCancel }) {
+  return <div className="modal-backdrop" onClick={onCancel}><div className="modal" onClick={event => event.stopPropagation()}><h2>{title}</h2><p className="muted">{message}</p>{details && <div className="push-summary">{details}</div>}<div className="modal-actions"><button className="ghost" onClick={onCancel}>{cancelLabel}</button><button className={danger ? 'danger-button primary' : 'primary'} onClick={onConfirm}>{confirmLabel}</button></div></div></div>
+}

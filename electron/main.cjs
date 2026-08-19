@@ -46,10 +46,10 @@ function saveDialogState() { fs.mkdirSync(app.getPath('userData'), { recursive: 
 function loadProjects() { try { return JSON.parse(fs.readFileSync(projectsPath(), 'utf8')).map(project => typeof project === 'string' ? { path: project, icon: findProjectIcon(project), lastOpened: 0 } : { lastOpened: 0, ...project }).filter(project => typeof project?.path === 'string' && project.path && fs.existsSync(project.path)) } catch { return [] } }
 function persistProjects() { fs.mkdirSync(app.getPath('userData'), { recursive: true }); fs.writeFileSync(projectsPath(), JSON.stringify(projects, null, 2)) }
 function loadSettings() {
-  try { return { endpoint: 'http://localhost:11434', model: '', language: 'English', ...JSON.parse(fs.readFileSync(settingsPath(), 'utf8')) } } catch { return { endpoint: 'http://localhost:11434', model: '', language: 'English' } }
+  try { return { aiEnabled: false, endpoint: 'http://localhost:11434', model: '', language: 'English', ...JSON.parse(fs.readFileSync(settingsPath(), 'utf8')) } } catch { return { aiEnabled: false, endpoint: 'http://localhost:11434', model: '', language: 'English' } }
 }
 function saveSettings(settings) {
-  aiSettings = { endpoint: String(settings.endpoint || '').replace(/\/$/, ''), model: String(settings.model || ''), language: String(settings.language || 'English') }
+  aiSettings = { aiEnabled: settings.aiEnabled === true, endpoint: String(settings.endpoint || '').replace(/\/$/, ''), model: String(settings.model || ''), language: String(settings.language || 'English') }
   fs.mkdirSync(app.getPath('userData'), { recursive: true })
   fs.writeFileSync(settingsPath(), JSON.stringify(aiSettings, null, 2))
   return aiSettings
@@ -233,8 +233,26 @@ function gitCurrentBranch(directory) {
 function gitHasCommits(directory) {
   return new Promise(resolve => execFile('git', ['-C', directory, 'rev-parse', '--verify', 'HEAD'], { windowsHide: true, timeout: 10000 }, error => resolve(!error)))
 }
+// `git lfs track` prints a tracked section followed by an excluded one; only the first
+// holds patterns, and neither section header may be mistaken for one.
+function parseLfsPatterns(output) {
+  const patterns = []
+  let tracked = false
+  for (const line of String(output).split(/\r?\n/)) {
+    if (/^Listing /.test(line)) { tracked = line.startsWith('Listing tracked patterns'); continue }
+    const pattern = line.trim().split(/\s+/)[0]
+    if (tracked && pattern) patterns.push(pattern)
+  }
+  return patterns
+}
+// `git lfs install` writes filter.lfs.* to the user's global config, and the Windows
+// installer writes it system-wide, so a --local lookup really asks "was LFS turned on
+// from inside this app?" — it answers false for every repository set up the normal way.
+// A repository counts as LFS when it opted in locally or when it declares any pattern.
 function gitLfsAvailable(directory) {
-  return new Promise(resolve => execFile('git', ['-C', directory, 'config', '--local', '--get-regexp', '^filter\\.lfs\\.'], { windowsHide: true, timeout: 10000 }, error => resolve(!error)))
+  const optedInLocally = new Promise(resolve => execFile('git', ['-C', directory, 'config', '--local', '--get-regexp', '^filter\\.lfs\\.'], { windowsHide: true, timeout: 10000 }, error => resolve(!error)))
+  const tracked = runGit(directory, ['lfs', 'track'], 10000).then(parseLfsPatterns).catch(() => [])
+  return Promise.all([optedInLocally, tracked]).then(([enabled, patterns]) => enabled || patterns.length > 0)
 }
 function findProjectIcon(directory) {
   try {
@@ -390,6 +408,7 @@ ipcMain.handle('save-settings', (_, settings) => saveSettings(settings))
 ipcMain.handle('fetch-models', async (_, endpoint) => { const data = await requestJson(`${String(endpoint).replace(/\/$/, '')}/api/tags`); return (data.models || []).map(model => model.name).filter(Boolean) })
 ipcMain.handle('generate-commit-message', async (_, { files, operation = 'commit' } = {}) => {
   if (!currentDirectory) throw new Error('No directory selected')
+  if (!aiSettings?.aiEnabled) throw new Error('AI generation is disabled in Settings')
   if (!aiSettings?.endpoint || !aiSettings?.model) throw new Error('Configure the Ollama endpoint and model in Settings')
   const selected = Array.isArray(files) ? files.filter(file => typeof file === 'string' && file && !file.includes('..')) : []
   if (!selected.length) throw new Error('Select at least one file')
@@ -438,6 +457,80 @@ ipcMain.handle('get-stashes', async () => {
     const files = await new Promise(resolve => execFile('git', ['-C', currentDirectory, 'stash', 'show', '--name-only', '--format=', ref], { windowsHide: true, timeout: 30000, maxBuffer: 8 * 1024 * 1024 }, (_, stdout) => resolve(stdout.split(/\r?\n/).filter(Boolean))))
     return { ref, date, message: messageParts.join('|'), files }
   }))
+})
+ipcMain.handle('get-history', async () => {
+  if (!currentDirectory) return []
+  const output = await runGit(currentDirectory, ['log', '-n', '100', '--date=iso-strict', '--format=%H%x1f%h%x1f%an%x1f%ad%x1f%s%x1e'])
+  const commits = output.split('\x1e').map(value => value.trim()).filter(Boolean).map(value => {
+    const [hash, shortHash, author, date, message] = value.split('\x1f')
+    return { hash, shortHash, author, date, message }
+  })
+  let remoteTags = new Set()
+  try { remoteTags = new Set((await runGit(currentDirectory, ['ls-remote', '--tags', 'origin'])).split(/\r?\n/).map(line => line.match(/refs\/tags\/(.+?)(?:\^\{\})?$/)?.[1]).filter(Boolean)) } catch {}
+  return Promise.all(commits.map(async commit => { const tags = (await runGit(currentDirectory, ['tag', '--points-at', commit.hash])).split(/\r?\n/).filter(Boolean); return { ...commit, tags, pushedTags: tags.filter(name => remoteTags.has(name)) } }))
+})
+ipcMain.handle('get-pending-commits', async () => {
+  if (!currentDirectory) return []
+  let output = ''
+  try { output = await runGit(currentDirectory, ['log', '@{u}..HEAD', '--format=%H%x1f%h%x1f%an%x1f%ad%x1f%s', '--date=iso-strict']) } catch { return [] }
+  return output.split(/\r?\n/).filter(Boolean).map(line => { const [hash, shortHash, author, date, message] = line.split('\x1f'); return { hash, shortHash, author, date, message } })
+})
+ipcMain.handle('amend-commit-message', async (_, message) => {
+  if (!currentDirectory) throw new Error('No directory selected')
+  const value = String(message || '').trim()
+  if (!value) throw new Error('The commit message is empty')
+  await runGit(currentDirectory, ['commit', '--amend', '-m', value])
+  await publish('post-commit')
+  return { ok: true }
+})
+ipcMain.handle('generate-release-tag', async () => {
+  if (!currentDirectory) throw new Error('No directory selected')
+  if (!aiSettings?.aiEnabled) throw new Error('AI generation is disabled in Settings')
+  if (!aiSettings?.endpoint || !aiSettings?.model) throw new Error('Configure the Ollama endpoint and model in Settings')
+  const base = await runGit(currentDirectory, ['describe', '--tags', '--abbrev=0']).catch(() => '')
+  const range = base ? `${base}..HEAD` : 'HEAD'
+  const changes = await runGit(currentDirectory, ['log', range, '--format=%s%n%b']).catch(() => '')
+  const changeSummary = changes.trim() || 'No new commits were found since the latest tag. Propose the next patch release only if the user explicitly wants to create one.'
+  const prompt = `TASK: Propose a release tag for the following Git changes.
+Return ONLY valid JSON with exactly these fields:
+{"name":"v1.5.0","message":"Release v1.5.0"}
+The name MUST be a semantic version tag starting with v. Increment the latest version ${base || 'v0.0.0'} according to the changes. The message must be concise and written in ${aiSettings.language}.
+
+CHANGES:
+${changeSummary.slice(0, 12000)}`
+  const result = await requestJson(`${aiSettings.endpoint}/api/generate`, { method: 'POST' }, { model: aiSettings.model, prompt, stream: false })
+  const raw = String(result.response || '').trim().replace(/^```json\s*|\s*```$/g, '')
+  try {
+    const parsed = JSON.parse(raw)
+    if (!/^v\d+\.\d+\.\d+$/.test(parsed.name) || !String(parsed.message || '').trim()) throw new Error()
+    return { name: parsed.name, message: String(parsed.message).trim(), base, hasChanges: Boolean(changes.trim()) }
+  } catch { throw new Error('Ollama returned an invalid release tag proposal') }
+})
+ipcMain.handle('create-tag', async (_, { name, commit, message, annotated = true } = {}) => {
+  if (!currentDirectory) throw new Error('No directory selected')
+  const tagName = String(name || '').trim()
+  const target = String(commit || '').trim()
+  if (!tagName || !/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(tagName) || tagName.includes('..')) throw new Error('Invalid tag name')
+  if (!target || (target !== 'HEAD' && !/^[0-9a-f]{7,40}$/i.test(target))) throw new Error('Invalid commit')
+  if (annotated) {
+    const tagMessage = String(message || '').trim()
+    if (!tagMessage) throw new Error('The annotated tag message is empty')
+    await runGit(currentDirectory, ['tag', '-a', tagName, target, '-m', tagMessage])
+  } else await runGit(currentDirectory, ['tag', tagName, target])
+  return { ok: true }
+})
+ipcMain.handle('delete-tag', async (_, name) => {
+  if (!currentDirectory) throw new Error('No directory selected')
+  const tagName = String(name || '').trim()
+  if (!tagName || !/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(tagName) || tagName.includes('..')) throw new Error('Invalid tag name')
+  await runGit(currentDirectory, ['tag', '-d', tagName])
+  return { ok: true }
+})
+ipcMain.handle('push-tag', async (_, name) => {
+  if (!currentDirectory) throw new Error('No directory selected')
+  const tagName = String(name || '').trim()
+  if (!tagName || !/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(tagName) || tagName.includes('..')) throw new Error('Invalid tag name')
+  return runGitRemoteTag(tagName)
 })
 ipcMain.handle('stash-selected', async (_, { files, message }) => {
   if (!currentDirectory) throw new Error('No directory selected')
@@ -506,6 +599,12 @@ async function runGitRemote(command) {
   const output = await runGitStreaming(['-C', currentDirectory, command, '--progress'])
   sendOperationLog(`${command === 'pull' ? 'Pull' : 'Push'} completed`)
   return output || `${command} completed`
+}
+async function runGitRemoteTag(tagName) {
+  sendOperationLog(`Pushing tag ${tagName} started`)
+  const output = await runGitStreaming(['-C', currentDirectory, 'push', 'origin', tagName])
+  sendOperationLog(`Pushing tag ${tagName} completed`)
+  return output || `Tag ${tagName} pushed`
 }
 ipcMain.handle('git-pull', async () => { const result = await runGitRemote('pull'); await publish('git-pull'); return result })
 ipcMain.handle('git-push', async () => { const result = await runGitRemote('push'); await publish('git-push'); return result })
@@ -647,7 +746,7 @@ ipcMain.handle('get-lfs-config', async () => {
     runGit(currentDirectory, ['lfs', 'track']),
     runGit(currentDirectory, ['lfs', 'ls-files', '--name-only']),
   ])
-  const patterns = trackOutput.split(/\r?\n/).filter(line => line.trim() && !line.startsWith('Listing tracked patterns')).map(line => line.trim().split(/\s+/)[0]).filter(Boolean)
+  const patterns = parseLfsPatterns(trackOutput)
   const files = filesOutput.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
   return { patterns, files }
 })

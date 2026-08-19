@@ -4,18 +4,15 @@ on:
   workflow_dispatch:
     inputs:
       release_type:
-        description: 'Release type. "auto" never bumps major; choose major explicitly when you want it.'
+        description: 'Manual release type. Normal releases should be created as tags from the app.'
         type: choice
         required: true
-        default: auto
+        default: patch
         options:
-          - auto
           - patch
           - minor
           - major
   push:
-    branches:
-      - main
     tags:
       - 'v*'
 
@@ -25,20 +22,16 @@ permissions:
 jobs:
   # Decides whether this run should produce a release, and for which tag.
   # - A direct push of a `v*` tag always releases that tag.
-  # - A push to main only releases if there is at least one `fix:`/`feat:`
-  #   commit since the last tag; in that case it bumps package.json,
-  #   commits it as `chore(release): vX.Y.Z`, and tags it.
-  # - Automatic bumps are capped at `minor`: a `!` / `BREAKING CHANGE:` commit
-  #   produces a minor release, never a major one. Major releases only happen
-  #   when you run the workflow manually with release_type=major (or push a
-  #   `vX.0.0` tag yourself).
+  # - A push of a `v*` tag releases that exact tag.
+  # - Manual dispatch remains available as a fallback and may create a release
+  #   commit/tag explicitly; pushes to `main` never create releases.
   version:
     runs-on: ubuntu-latest
     outputs:
       release_tag: ${{ steps.decide.outputs.release_tag }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -52,45 +45,12 @@ jobs:
             exit 0
           fi
 
-          requested="${{ inputs.release_type || 'auto' }}"
-
-          if [ "$requested" != "auto" ]; then
-            # Explicit manual release: honour exactly what was asked for.
-            bump="$requested"
-            echo "Manual release requested: $bump"
-          else
-            if git log -1 --pretty=%s | grep -q '^chore(release):'; then
-              echo "HEAD is already a release commit, nothing to do."
-              echo "release_tag=" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-
-            last_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-            range="${last_tag:+refs/tags/$last_tag..}HEAD"
-            subjects=$(git log "$range" --format=%s)
-            bodies=$(git log "$range" --format=%B)
-
-            bump=""
-            if echo "$subjects" | grep -qE '^feat(\([^)]*\))?:'; then
-              bump="minor"
-            elif echo "$subjects" | grep -qE '^fix(\([^)]*\))?:'; then
-              bump="patch"
-            fi
-
-            # Breaking-change markers never trigger a major automatically: they
-            # are treated as at least a minor. Run the workflow manually with
-            # release_type=major when you decide it is time for the major bump.
-            if echo "$subjects" | grep -qE '^[a-zA-Z]+(\([^)]*\))?!:' || echo "$bodies" | grep -qE '^BREAKING[ -]CHANGE:'; then
-              bump="minor"
-              echo "::notice::Breaking-change commits found; automatic releases are capped at 'minor'. Re-run this workflow with release_type=major when you want the major bump."
-            fi
-
-            if [ -z "$bump" ]; then
-              echo "No fix/feat commits since ${last_tag:-the beginning}, skipping release."
-              echo "release_tag=" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
+          bump="${{ inputs.release_type || '' }}"
+          if [ -z "$bump" ]; then
+            echo "release_tag=" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          echo "Manual release requested: $bump"
 
           npm version "$bump" --no-git-tag-version --no-commit-hooks >/dev/null
           new_version="v$(node -p "require('./package.json').version")"
@@ -105,7 +65,6 @@ jobs:
           git add package.json package-lock.json
           git commit -m "chore(release): $new_version"
           git tag "$new_version"
-          git push origin HEAD:main
           git push origin "$new_version"
 
           echo "release_tag=$new_version" >> "$GITHUB_OUTPUT"
@@ -134,12 +93,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ needs.version.outputs.release_tag }}
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -161,7 +120,7 @@ jobs:
         run: npm run build:desktop:ci -- ${{ matrix.build_args }}
 
       - name: Upload desktop artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.artifact_name }}
           path: ${{ matrix.artifact_path }}

@@ -2,7 +2,7 @@ import ProjectToolbar from '../components/ProjectToolbar'
 import RepositoryActionsBar from '../components/RepositoryActionsBar'
 import FilesTable from '../components/FilesTable'
 
-export default function ChangesPage({ directory, projects, choose, selectProject, removeProjectOption, active, stop, resume, defaultPathIcon, emptyDirectory, checkoutRemote, setCheckoutRemote, initializeEmptyDirectory, checkoutEmptyDirectory, currentBranch, gitLfs, onBranchSwitch, incomingCommits, outgoingCommits, hasCommits, selected, aiBusy, gitBusy, generateCommitMessage, runGitRemote, requestPush, requestRevert, changes, query, setQuery, expanded, toggleFolder, toggleSelection, openDiff }) {
+export default function ChangesPage({ directory, projects, choose, selectProject, removeProjectOption, active, stop, resume, defaultPathIcon, emptyDirectory, checkoutRemote, setCheckoutRemote, initializeEmptyDirectory, checkoutEmptyDirectory, currentBranch, gitLfs, onBranchSwitch, incomingCommits, outgoingCommits, hasCommits, selected, aiBusy, gitBusy, generateCommitMessage, runGitRemote, requestPush, requestRevert, changes, query, setQuery, expanded, toggleFolder, toggleSelection, expandAllFolders, collapseAllFolders, openDiff }) {
   return (
     <div className="tab-page changes-page">
       {emptyDirectory && (
@@ -23,7 +23,7 @@ export default function ChangesPage({ directory, projects, choose, selectProject
       )}
       <ProjectToolbar {...{ directory, projects, choose, selectProject, removeProjectOption, active, stop, resume, defaultPathIcon }} />
       <RepositoryActionsBar {...{ directory, currentBranch, gitLfs, onBranchSwitch, incomingCommits, outgoingCommits, hasCommits, selected, aiBusy, gitBusy, generateCommitMessage, runGitRemote, requestPush, requestRevert }} showPull showPush showCommit showAmend={hasCommits} showStash showRevert />
-      <FilesTable {...{ changes, query, selected, expanded, toggleFolder, toggleSelection, openDiff, outgoingCommits, gitBusy, runGitRemote }} onQueryChange={setQuery} />
+      <FilesTable {...{ changes, query, selected, expanded, toggleFolder, toggleSelection, expandAllFolders, collapseAllFolders, openDiff, outgoingCommits, gitBusy, runGitRemote }} onQueryChange={setQuery} />
     </div>
   )
 }
