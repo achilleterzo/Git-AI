@@ -463,7 +463,7 @@ ${diffStat.slice(0, 4000)}`
   ]
   const messages = [{ role: 'user', content: prompt }]
   let finalContent = ''
-  for (let attempt = 0; attempt < 8; attempt += 1) {
+  for (let attempt = 0; attempt < 16; attempt += 1) {
     const result = await requestChatWithThinking(aiSettings.endpoint, { model: aiSettings.model, messages, tools, stream: false })
     const assistant = result.message || {}
     messages.push(assistant)
@@ -560,7 +560,7 @@ ${fileSummary.slice(0, 6000)}`
   ]
   const messages = [{ role: 'user', content: prompt }]
   let finalContent = ''
-  for (let attempt = 0; attempt < 8; attempt += 1) {
+  for (let attempt = 0; attempt < 16; attempt += 1) {
     const result = await requestChatWithThinking(aiSettings.endpoint, { model: aiSettings.model, messages, tools, stream: false })
     const assistant = result.message || {}
     messages.push(assistant)
@@ -579,6 +579,10 @@ ${fileSummary.slice(0, 6000)}`
       }
       messages.push({ role: 'tool', tool_name: name, content: String(content).slice(0, 16000) })
     }
+  }
+  if (!finalContent) {
+    const finalResult = await requestChatWithThinking(aiSettings.endpoint, { model: aiSettings.model, messages: [...messages, { role: 'user', content: 'Stop inspecting files now. Return ONLY the final valid JSON object with exactly the fields name and message. Do not call tools and do not include any explanation.' }], stream: false })
+    finalContent = String(finalResult.message?.content || '').trim()
   }
   const cleaned = finalContent.replace(/^```(?:json)?\s*|\s*```$/gi, '').trim()
   const jsonMatch = cleaned.match(/\{[\s\S]*\}/)
