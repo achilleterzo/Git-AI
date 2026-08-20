@@ -411,7 +411,7 @@ async function startWatching(directory) {
   await publish('started', generation)
 }
 function openDirectory() { dialog.showOpenDialog(win, { properties: ['openDirectory'] }).then(result => { if (result.filePaths[0]) startWatching(result.filePaths[0]) }) }
-function buildMenu() { Menu.setApplicationMenu(Menu.buildFromTemplate([{ label: 'File', submenu: [{ label: 'Open directory…', accelerator: 'CmdOrCtrl+O', click: openDirectory }, { label: 'Refresh Git status', accelerator: 'CmdOrCtrl+R', click: () => publish('manual-refresh') }, { type: 'separator' }, { label: 'Settings…', click: () => win.webContents.send('open-settings') }, { label: 'About Pulse Git AI', click: () => win.webContents.send('open-about') }, { type: 'separator' }, { role: 'quit' }] }])) }
+function buildMenu() { Menu.setApplicationMenu(Menu.buildFromTemplate([{ label: 'File', submenu: [{ label: 'AI .gitignore Assistant…', click: () => win.webContents.send('open-project-assistant') }, { label: 'Settings…', click: () => win.webContents.send('open-settings') }, { label: 'About Pulse Git AI', click: () => win.webContents.send('open-about') }, { type: 'separator' }, { role: 'quit' }] }])) }
 
 ipcMain.handle('choose-directory', async (_, initialPath) => { const fallback = projects.slice().sort((a, b) => (b.lastOpened || 0) - (a.lastOpened || 0))[0]?.path; const defaultPath = [initialPath, lastDirectoryDialogPath, currentDirectory, fallback].find(value => value && fs.existsSync(value)); const result = await dialog.showOpenDialog(win, { defaultPath, properties: ['openDirectory'] }); const selected = result.filePaths[0] || null; if (selected) { lastDirectoryDialogPath = selected; saveDialogState() } return selected })
 ipcMain.handle('choose-project-icon', async (_, projectDirectory) => { const defaultPath = projectDirectory && fs.existsSync(projectDirectory) ? projectDirectory : undefined; const result = await dialog.showOpenDialog(win, { defaultPath, properties: ['openFile'], filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'ico', 'svg'] }] }); return result.filePaths[0] ? readIconFile(result.filePaths[0]) : null })
@@ -447,6 +447,70 @@ ipcMain.handle('get-latest-release', async () => { try { return await fetchLates
 ipcMain.handle('open-release', (_, url) => { if (typeof url === 'string' && /^https:\/\/github\.com\//.test(url)) return shell.openExternal(url); return false })
 ipcMain.handle('save-settings', (_, settings) => saveSettings(settings))
 ipcMain.handle('fetch-models', async (_, endpoint) => { const data = await requestJson(`${String(endpoint).replace(/\/$/, '')}/api/tags`); return (data.models || []).map(model => model.name).filter(Boolean) })
+ipcMain.handle('get-project-assistant-context', async () => {
+  if (!currentDirectory) throw new Error('No directory selected')
+  const files = (await runGit(currentDirectory, ['ls-files', '--cached', '--others', '--exclude-standard'])).split(/\r?\n/).filter(Boolean).slice(0, 1200)
+  const entries = files.map(file => { try { const stat = fs.statSync(path.join(currentDirectory, file)); return { path: file, size: stat.size, type: stat.isDirectory() ? 'directory' : 'file' } } catch { return { path: file, type: 'file' } } })
+  return { directory: path.basename(currentDirectory), files: entries }
+})
+ipcMain.handle('generate-project-plan', async (_, instruction) => {
+  if (!currentDirectory) throw new Error('No directory selected')
+  if (!aiSettings?.aiEnabled || !aiSettings?.endpoint || !aiSettings?.model) throw new Error('Configure and enable AI in Settings')
+  const root = path.basename(currentDirectory)
+  const prompt = `You are a .gitignore assistant. The project root is named "${root}". Investigate the project yourself using the available tools. Infer the project type only from evidence in the project. Your ONLY task is to propose file and directory patterns that should be added to the root .gitignore. Do not propose README files, source changes, folder moves, deletions, or any file other than .gitignore. Return ONLY valid JSON with this shape: {"summary":"...","entries":[{"pattern":"pattern","reason":"why it should be ignored"}]}. Do not include patterns that would hide source files or user-authored project files.\n\nUSER INSTRUCTIONS:\n${String(instruction || '').trim()}`
+  const tools = [
+    { type: 'function', function: { name: 'list_project', description: 'List relevant files and directories in the current project root.', parameters: { type: 'object', properties: {} } } },
+    { type: 'function', function: { name: 'read_file', description: 'Read a text file from the current project when needed for the requested change.', parameters: { type: 'object', required: ['path'], properties: { path: { type: 'string' } } } } }
+  ]
+  const messages = [{ role: 'user', content: prompt }]
+  let raw = ''
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const result = await requestChatWithThinking(aiSettings.endpoint, { model: aiSettings.model, messages, tools, stream: false })
+    const assistant = result.message || {}
+    messages.push(assistant)
+    const calls = Array.isArray(assistant.tool_calls) ? assistant.tool_calls : []
+    if (!calls.length) { raw = String(assistant.content || ''); break }
+    for (const call of calls) {
+      const name = call?.function?.name
+      const args = typeof call?.function?.arguments === 'string' ? JSON.parse(call.function.arguments) : (call?.function?.arguments || {})
+      let content = 'Unknown tool'
+      if (name === 'list_project') content = (await runGit(currentDirectory, ['ls-files', '--cached', '--others', '--exclude-standard'])).split(/\r?\n/).filter(Boolean).join('\n')
+      if (name === 'read_file') {
+        const relative = String(args.path || '')
+        if (!relative || relative.includes('..') || path.isAbsolute(relative)) throw new Error('AI requested an unsafe project path')
+        try { content = fs.readFileSync(path.resolve(currentDirectory, relative), 'utf8').slice(0, 24000) } catch { content = 'File unavailable or binary.' }
+      }
+      messages.push({ role: 'tool', tool_name: name, content: String(content).slice(0, 30000) })
+    }
+  }
+  const fenced = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim()
+  const jsonStart = fenced.indexOf('{')
+  const jsonEnd = fenced.lastIndexOf('}')
+  const cleaned = jsonStart >= 0 && jsonEnd > jsonStart ? fenced.slice(jsonStart, jsonEnd + 1) : fenced
+  let plan
+  try { plan = JSON.parse(cleaned) } catch { throw new Error('AI returned an invalid project plan') }
+  if (!plan || !Array.isArray(plan.entries)) throw new Error('AI returned an invalid ignore proposal')
+  const ignorePath = path.join(currentDirectory, '.gitignore')
+  const existing = fs.existsSync(ignorePath) ? fs.readFileSync(ignorePath, 'utf8') : ''
+  const entries = plan.entries.filter(entry => typeof entry?.pattern === 'string' && entry.pattern.trim() && !entry.pattern.includes('..') && !entry.pattern.includes('\0'))
+  const additions = entries.map(entry => `# ${String(entry.reason || 'AI suggestion').replace(/[\r\n#]/g, ' ').trim()}\n${entry.pattern.trim()}`).join('\n')
+  plan.changes = additions ? [{ action: 'update', path: '.gitignore', content: `${existing.trimEnd()}${existing.trimEnd() ? '\n\n' : ''}${additions}\n`, reason: entries.map(entry => `${entry.pattern.trim()} — ${String(entry.reason || 'AI suggestion').replace(/[\r\n#]/g, ' ').trim()}`).join(' | ') }] : []
+  delete plan.entries
+  return plan
+})
+ipcMain.handle('apply-project-plan', async (_, changes) => {
+  if (!currentDirectory || !Array.isArray(changes)) throw new Error('Invalid project plan')
+  for (const change of changes) {
+    if (!['create', 'update'].includes(change.action) || typeof change.path !== 'string' || change.path.includes('..') || path.isAbsolute(change.path) || typeof change.content !== 'string') throw new Error('Invalid project plan path')
+    const target = path.resolve(currentDirectory, change.path)
+    if (!target.startsWith(path.resolve(currentDirectory) + path.sep)) throw new Error('Invalid project plan path')
+    fs.mkdirSync(path.dirname(target), { recursive: true })
+    fs.writeFileSync(target, change.content, 'utf8')
+    sendOperationLog(`AI project assistant ${change.action}d ${change.path}`)
+  }
+  await publish('ai-project-plan')
+  return { applied: changes.length }
+})
 ipcMain.handle('generate-commit-message', async (_, { files, operation = 'commit' } = {}) => {
   if (!currentDirectory) throw new Error('No directory selected')
   if (!aiSettings?.aiEnabled) throw new Error('AI generation is disabled in Settings')

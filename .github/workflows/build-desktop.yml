@@ -65,6 +65,9 @@ jobs:
           git add package.json package-lock.json
           git commit -m "chore(release): $new_version"
           git tag "$new_version"
+          # Keep the release version synchronized on main. The workflow does
+          # not listen to pushes on main, so this cannot start another release.
+          git push origin HEAD:main
           git push origin "$new_version"
 
           echo "release_tag=$new_version" >> "$GITHUB_OUTPUT"

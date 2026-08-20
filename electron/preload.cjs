@@ -15,6 +15,9 @@ contextBridge.exposeInMainWorld('directoryAPI', {
   openRelease: (url) => ipcRenderer.invoke('open-release', url),
   saveSettings: (settings) => ipcRenderer.invoke('save-settings', settings),
   fetchModels: (endpoint) => ipcRenderer.invoke('fetch-models', endpoint),
+  getProjectAssistantContext: () => ipcRenderer.invoke('get-project-assistant-context'),
+  generateProjectPlan: (instruction) => ipcRenderer.invoke('generate-project-plan', String(instruction || '')),
+  applyProjectPlan: (changes) => ipcRenderer.invoke('apply-project-plan', changes),
   generateCommitMessage: (files, operation = 'commit') => ipcRenderer.invoke('generate-commit-message', { files: Array.isArray(files) ? files.map(file => String(file)) : [], operation: String(operation || 'commit') }),
   getDiff: (file) => ipcRenderer.invoke('get-diff', file),
   getStashes: () => ipcRenderer.invoke('get-stashes'),
@@ -58,11 +61,12 @@ contextBridge.exposeInMainWorld('directoryAPI', {
   updateProject: (originalPath, project) => ipcRenderer.invoke('update-project', originalPath, project),
   removeProject: (directory) => ipcRenderer.invoke('remove-project', directory),
   onOpenSettings: (callback) => { ipcRenderer.on('open-settings', callback) },
+  onOpenProjectAssistant: (callback) => { ipcRenderer.on('open-project-assistant', callback) },
   onOpenAbout: (callback) => { ipcRenderer.on('open-about', callback) },
   onUpdate: (callback) => { ipcRenderer.on('directory-update', (_, data) => callback(data)) }
   ,onOperationLog: (callback) => { ipcRenderer.on('operation-log', (_, data) => callback(data)) }
   ,onOperationProgress: (callback) => { ipcRenderer.on('operation-progress', (_, data) => callback(data)) }
   ,onAiPrompt: (callback) => { ipcRenderer.on('ai-prompt-log', (_, data) => callback(data)) }
-  ,isDevelopment: process.defaultApp === true
+  ,isDevelopment: process.defaultApp === true || Boolean(process.env.VITE_DEV_SERVER_URL)
   ,openDevTools: () => ipcRenderer.invoke('open-devtools')
 })

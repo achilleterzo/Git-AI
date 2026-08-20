@@ -283,6 +283,12 @@ aside { border-color:#30343a; background:#1b1e21 }
 .branch-remote label { color:#aeb5bd; font-size:10px; font-weight:700; letter-spacing:.8px; text-transform:uppercase; }
 .branch-remote input { width:100%; padding:8px 9px; border:1px solid #454b51; border-radius:7px; background:#17191c; color:#edf0f2; font-size:11px; outline:none; }
 .branch-remote .primary { min-height:30px; padding:0 10px; font-size:11px; }
+.assistant-modal { width:min(680px, calc(100vw - 40px)); }
+.assistant-modal textarea { width:100%; min-height:150px; resize:vertical; }
+.assistant-plan-list { display:grid; gap:6px; max-height:300px; overflow:auto; margin:14px 0; }
+.assistant-plan-list > div { display:grid; grid-template-columns:auto 1fr; gap:3px 8px; padding:9px; border:1px solid #3c4348; border-radius:7px; background:#17191c; }
+.assistant-plan-list code { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.assistant-plan-list small { grid-column:1 / -1; color:#aeb5bd; }
 .stash-card { cursor:pointer; }
 .stash-card.selected { border-color:#5eead4 !important; background:#2d3938; box-shadow:none; }
 .stash-accordion-item { margin-bottom:12px; }
