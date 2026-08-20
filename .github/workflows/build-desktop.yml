@@ -123,10 +123,9 @@ jobs:
         shell: bash
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           rm -rf release
-          npm run build:desktop:ci -- ${{ matrix.build_args }}
+          npm run build:desktop:ci -- ${{ matrix.build_args }} --publish never
 
       - name: Upload desktop artifact
         uses: actions/upload-artifact@v6
@@ -135,8 +134,33 @@ jobs:
           path: ${{ matrix.artifact_path }}
           if-no-files-found: error
 
-      - name: Upload release assets
+  release:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Windows asset
+        uses: actions/download-artifact@v6
+        with:
+          name: pulse-git-ai-windows
+          path: release-assets/windows
+
+      - name: Download Linux asset
+        uses: actions/download-artifact@v6
+        with:
+          name: pulse-git-ai-linux
+          path: release-assets/linux
+
+      - name: Download macOS asset
+        uses: actions/download-artifact@v6
+        with:
+          name: pulse-git-ai-macos
+          path: release-assets/macos
+
+      - name: Publish release assets
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.version.outputs.release_tag }}
-          files: ${{ matrix.artifact_path }}
+          files: |
+            release-assets/windows/*.exe
+            release-assets/linux/*.AppImage
+            release-assets/macos/*.dmg
