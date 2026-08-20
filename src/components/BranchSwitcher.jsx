@@ -5,15 +5,36 @@ export default function BranchSwitcher({ directory, currentBranch, onSwitch }) {
   const [branches, setBranches] = useState({ local: [], remote: [] })
   const [newBranch, setNewBranch] = useState('')
   const [base, setBase] = useState(currentBranch || '')
+  const [remoteInput, setRemoteInput] = useState('')
+  const [remoteBusy, setRemoteBusy] = useState(false)
 
   async function openSwitcher() {
     if (!directory) return
     try {
-      setBranches(await window.directoryAPI.getBranches())
+      const result = await window.directoryAPI.getBranches()
+      setBranches(result)
+      setRemoteInput(result.remoteUrl || '')
       setBase(currentBranch || '')
       setOpen(value => !value)
     } catch (error) {
       onSwitch({ error: error.message })
+    }
+  }
+
+  async function connectRemote() {
+    if (!remoteInput.trim()) return
+    setRemoteBusy(true)
+    try {
+      await window.directoryAPI.connectRemote(remoteInput)
+      const result = await window.directoryAPI.getBranches()
+      setBranches(result)
+      setRemoteInput(result.remoteUrl || remoteInput.trim())
+      setOpen(false)
+      onSwitch({ remoteConnected: true })
+    } catch (error) {
+      onSwitch({ error: error.message })
+    } finally {
+      setRemoteBusy(false)
     }
   }
 
@@ -26,6 +47,11 @@ export default function BranchSwitcher({ directory, currentBranch, onSwitch }) {
       </button>
       {open && <div className="branch-menu">
         <strong>Switch branch</strong>
+        <div className="branch-remote">
+          <label>Remote origin</label>
+          <input value={remoteInput} onChange={event => setRemoteInput(event.target.value)} placeholder="https://github.com/user/repository.git" />
+          <button type="button" className="primary" disabled={!remoteInput.trim() || remoteBusy} onClick={connectRemote}>{remoteBusy ? 'Updating…' : branches.remoteUrl ? 'Update remote' : 'Connect remote'}</button>
+        </div>
         <div className="branch-menu-list">
           {branches.local.map(branch => <button type="button" className={branch === currentBranch ? 'selected' : ''} key={`local-${branch}`} onClick={() => { setOpen(false); onSwitch({ target: branch }) }}>{branch}<small>local</small></button>)}
           {branches.remote.map(branch => <button type="button" key={`remote-${branch}`} onClick={() => { setOpen(false); onSwitch({ target: branch, remote: true }) }}>{branch}<small>remote</small></button>)}

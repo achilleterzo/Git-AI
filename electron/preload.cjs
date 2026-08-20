@@ -39,6 +39,7 @@ contextBridge.exposeInMainWorld('directoryAPI', {
   gitPull: () => ipcRenderer.invoke('git-pull'),
   gitPush: () => ipcRenderer.invoke('git-push'),
   getBranches: () => ipcRenderer.invoke('get-branches'),
+  connectRemote: (url) => ipcRenderer.invoke('connect-remote', String(url || '')),
   switchBranch: (options) => ipcRenderer.invoke('switch-branch', options),
   unstash: (ref) => ipcRenderer.invoke('unstash', ref),
   unstashMany: (refs) => ipcRenderer.invoke('unstash-many', refs),

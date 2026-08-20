@@ -279,6 +279,10 @@ aside { border-color:#30343a; background:#1b1e21 }
 .branch-create label { color:#aeb5bd; font-size:10px; font-weight:700; letter-spacing:.8px; text-transform:uppercase; }
 .branch-create input, .branch-create select { width:100%; padding:8px 9px; border:1px solid #454b51; border-radius:7px; background:#17191c; color:#edf0f2; font-size:11px; outline:none; }
 .branch-create .primary { min-height:30px; padding:0 10px; font-size:11px; }
+.branch-remote { display:grid; gap:6px; margin:8px 0 10px; padding-bottom:10px; border-bottom:1px solid #3c4348; }
+.branch-remote label { color:#aeb5bd; font-size:10px; font-weight:700; letter-spacing:.8px; text-transform:uppercase; }
+.branch-remote input { width:100%; padding:8px 9px; border:1px solid #454b51; border-radius:7px; background:#17191c; color:#edf0f2; font-size:11px; outline:none; }
+.branch-remote .primary { min-height:30px; padding:0 10px; font-size:11px; }
 .stash-card { cursor:pointer; }
 .stash-card.selected { border-color:#5eead4 !important; background:#2d3938; box-shadow:none; }
 .stash-accordion-item { margin-bottom:12px; }

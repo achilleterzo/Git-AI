@@ -252,9 +252,11 @@ function runGitStreaming(args, { cwd, idleTimeout = GIT_STREAM_IDLE_MS } = {}) {
 
 function gitAheadBehind(directory) {
   return new Promise(resolve => execFile('git', ['-C', directory, 'rev-list', '--left-right', '--count', '@{u}...HEAD'], { windowsHide: true, timeout: 10000 }, (error, stdout) => {
-    if (error) return resolve({ incoming: 0, outgoing: 0 })
-    const [incoming, outgoing] = stdout.trim().split(/\s+/).map(value => Number.parseInt(value, 10) || 0)
-    resolve({ incoming, outgoing })
+    if (!error) {
+      const [incoming, outgoing] = stdout.trim().split(/\s+/).map(value => Number.parseInt(value, 10) || 0)
+      return resolve({ incoming, outgoing })
+    }
+    execFile('git', ['-C', directory, 'rev-list', '--count', 'HEAD'], { windowsHide: true, timeout: 10000 }, (headError, headStdout) => resolve({ incoming: 0, outgoing: headError ? 0 : Number.parseInt(headStdout.trim(), 10) || 0 }))
   }))
 }
 function gitCurrentBranch(directory) {
@@ -706,7 +708,13 @@ ipcMain.handle('refresh', async () => publish('post-commit'))
 async function runGitRemote(command) {
   if (!currentDirectory) throw new Error('No directory selected')
   sendOperationLog(`${command === 'pull' ? 'Pull' : 'Push'} started`)
-  const output = await runGitStreaming(['-C', currentDirectory, command, '--progress'])
+  let args = ['-C', currentDirectory, command, '--progress']
+  if (command === 'push') {
+    const branch = await gitCurrentBranch(currentDirectory)
+    const hasUpstream = await runGit(currentDirectory, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']).then(() => true).catch(() => false)
+    if (!hasUpstream) args = ['-C', currentDirectory, 'push', '--progress', '--set-upstream', 'origin', branch]
+  }
+  const output = await runGitStreaming(args)
   sendOperationLog(`${command === 'pull' ? 'Pull' : 'Push'} completed`)
   return output || `${command} completed`
 }
@@ -719,14 +727,28 @@ async function runGitRemoteTag(tagName) {
 ipcMain.handle('git-pull', async () => { const result = await runGitRemote('pull'); await publish('git-pull'); return result })
 ipcMain.handle('git-push', async () => { const result = await runGitRemote('push'); await publish('git-push'); return result })
 ipcMain.handle('get-branches', async () => {
-  if (!currentDirectory) return { current: '', local: [], remote: [] }
-  const [localOutput, remoteOutput] = await Promise.all([
+  if (!currentDirectory) return { current: '', local: [], remote: [], remoteUrl: '' }
+  const [localOutput, remoteOutput, remoteUrl] = await Promise.all([
     runGit(currentDirectory, ['for-each-ref', '--format=%(refname:short)', 'refs/heads']),
     runGit(currentDirectory, ['for-each-ref', '--format=%(refname:short)', 'refs/remotes']),
+    runGit(currentDirectory, ['remote', 'get-url', '--push', 'origin']).catch(() => runGit(currentDirectory, ['remote', 'get-url', 'origin']).catch(() => '')),
   ])
   const local = localOutput.split(/\r?\n/).map(value => value.trim()).filter(Boolean)
   const remote = remoteOutput.split(/\r?\n/).map(value => value.trim()).filter(value => value && !value.endsWith('/HEAD'))
-  return { current: await gitCurrentBranch(currentDirectory), local, remote }
+  return { current: await gitCurrentBranch(currentDirectory), local, remote, remoteUrl: remoteUrl.trim() }
+})
+ipcMain.handle('connect-remote', async (_, remoteUrl) => {
+  if (!currentDirectory) throw new Error('No directory selected')
+  let url = String(remoteUrl || '').trim()
+  if (/^git@[^/:]+\//.test(url)) url = url.replace('/', ':')
+  if (/^git@[^:]+:[^/]+\/.+[^/]$/.test(url) && !url.endsWith('.git')) url += '.git'
+  if (!url) throw new Error('Enter a remote repository URL')
+  const existing = await runGit(currentDirectory, ['remote', 'get-url', 'origin']).catch(() => '')
+  if (existing) await runGit(currentDirectory, ['remote', 'set-url', 'origin', url])
+  else await runGit(currentDirectory, ['remote', 'add', 'origin', url])
+  await runGit(currentDirectory, ['remote', 'set-url', '--push', 'origin', url])
+  sendOperationLog(`Remote origin connected: ${url}`)
+  return url
 })
 ipcMain.handle('switch-branch', async (_, { target, newBranch, base, remote = false, stash = false } = {}) => {
   if (!currentDirectory) throw new Error('No directory selected')
