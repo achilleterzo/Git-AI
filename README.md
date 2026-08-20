@@ -53,6 +53,8 @@ Pulse tracks:
 
 Repositories can also be initialized directly from Pulse or checked out from a remote URL.
 
+![Pulse home](screenshots/Home.png)
+
 ### AI-assisted commits
 
 Select the files that belong together and generate a commit message from their actual changes.
@@ -60,6 +62,8 @@ Select the files that belong together and generate a commit message from their a
 Pulse uses the selected diff together with added and deleted files to generate concise commit messages suitable for Conventional Commits.
 
 The generated message remains editable before committing.
+
+![Changes and commit workflow](screenshots/Changes.png)
 
 Typical workflow:
 
@@ -83,6 +87,8 @@ Switch between local and remote branches directly from the repository toolbar.
 
 Pulse can also stash current changes before switching branches, making it easier to recover work started on the wrong branch.
 
+![Switch branch](screenshots/Switch%20Branch.png)
+
 ### Stash management
 
 Pulse provides a dedicated stash workflow instead of treating the stash as an opaque stack.
@@ -99,6 +105,8 @@ Supported operations include:
 - delete individual or multiple stashes
 
 This makes stashes usable as temporary structured work rather than a collection of anonymous `WIP on branch` entries.
+
+![Stash management](screenshots/Stash.png)
 
 ### Commit history and tags
 
@@ -117,6 +125,8 @@ Pulse supports:
 
 When AI is enabled, Pulse can analyze changes since the previous release and propose a release tag and release message.
 
+![Commit history](screenshots/History.png)
+
 ### Git LFS
 
 Git LFS can be enabled and managed directly from Pulse.
@@ -131,11 +141,17 @@ The LFS view provides:
 
 Patterns are applied using the native Git LFS configuration rather than maintaining a separate Pulse-specific configuration.
 
+![Git LFS](screenshots/LDF-1.png)
+
+![Git LFS details](screenshots/LDF-2.png)
+
 ### Integrated terminal
 
 Pulse includes an embedded terminal opened directly in the active repository directory.
 
 On Windows it uses PowerShell through a native PTY, so normal Git commands and project tooling remain available without leaving the application.
+
+![Integrated console](screenshots/Console.png)
 
 ### Git remote operations
 
@@ -175,7 +191,7 @@ Git operations themselves remain explicit and under user control.
 - Ollama, if AI features are required
 - Git LFS, if LFS features are required
 
-The current desktop build targets Windows.
+Desktop builds are available for Windows, macOS and Linux. Git must be installed and available on the system `PATH`; Git LFS is required only for repositories that use LFS. The integrated terminal uses PowerShell on Windows and the user's default shell on macOS/Linux.
 
 ## Development
 
@@ -201,6 +217,18 @@ Build the Windows desktop installer:
 
 ```bash
 npm run dist:desktop
+```
+
+Build the macOS desktop package (run on macOS):
+
+```bash
+npm run dist:mac
+```
+
+Build Linux packages (`AppImage` and `deb`, run on Linux):
+
+```bash
+npm run dist:linux
 ```
 
 Run the Electron application against an existing build:
@@ -229,3 +257,13 @@ Its goal is to remove repetitive work around Git while keeping the developer in 
 The AI describes the work.
 
 You decide what the work is.
+
+## License
+
+See [LICENSE](LICENSE) for the applicable license terms.
+
+## Support
+
+If you find AI Debate useful and want to support its development:
+
+[Buy me a coffee](https://buymeacoffee.com/achilleterb)

@@ -9,6 +9,8 @@
     "test": "npm run build",
     "build": "vite build",
     "dist:desktop": "npm run build && electron-builder --win",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:linux": "npm run build && electron-builder --linux",
     "build:desktop:ci": "npm run build && electron-builder",
     "start": "electron ."
   },
@@ -51,6 +53,18 @@
         "nsis"
       ],
       "icon": "assets/pulse-git-ai.png"
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ]
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Development"
     }
   }
 }

@@ -19,16 +19,24 @@ let aiSettings
 let projects = []
 let terminalProcess
 let lastDirectoryDialogPath = ''
+const pendingOperationLogs = []
 
 const PUBLISH_DEBOUNCE_MS = 200
 
 function sendOperationLog(message) {
-  if (win && !win.isDestroyed()) win.webContents.send('operation-log', { message: String(message), at: new Date().toISOString() })
+  const entry = { message: String(message), at: new Date().toISOString() }
+  if (win && !win.isDestroyed()) win.webContents.send('operation-log', entry)
+  else pendingOperationLogs.push(entry)
+}
+
+function serviceLog(level, ...parts) {
+  const message = parts.map(part => part instanceof Error ? part.stack || part.message : typeof part === 'string' ? part : JSON.stringify(part)).join(' ')
+  sendOperationLog(`[${level}] ${message}`)
 }
 
 function sendRenderer(channel, payload) {
   if (!win || win.isDestroyed()) return
-  try { win.webContents.send(channel, JSON.parse(JSON.stringify(payload))) } catch (error) { console.error(`[IPC] Could not send ${channel}:`, error.message) }
+  try { win.webContents.send(channel, JSON.parse(JSON.stringify(payload))) } catch (error) { serviceLog('ERROR', `[IPC] Could not send ${channel}:`, error) }
 }
 
 function stopTerminal() {
@@ -54,6 +62,18 @@ function saveSettings(settings) {
   fs.writeFileSync(settingsPath(), JSON.stringify(aiSettings, null, 2))
   return aiSettings
 }
+
+function shellCommand() {
+  if (process.platform === 'win32') return { file: 'powershell.exe', args: ['-NoProfile', '-NonInteractive', '-Command'], label: 'PS' }
+  const file = process.env.SHELL || (process.platform === 'darwin' ? '/bin/zsh' : '/bin/bash')
+  return { file, args: ['-lc'], label: path.basename(file) }
+}
+
+function terminalShell() {
+  if (process.platform === 'win32') return { file: 'powershell.exe', args: ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass'] }
+  const file = process.env.SHELL || (process.platform === 'darwin' ? '/bin/zsh' : '/bin/bash')
+  return { file, args: ['-il'] }
+}
 function thinkingPayload() {
   const reasoning = aiSettings?.reasoning || 'instant'
   return reasoning === 'instant' ? { think: false } : { think: reasoning }
@@ -74,20 +94,20 @@ function requestJson(urlString, options = {}, body = null) {
   return new Promise((resolve, reject) => {
     const url = new URL(urlString)
     const client = url.protocol === 'https:' ? https : http
-    console.log('[Ollama] request', JSON.stringify({ url: urlString, method: options.method || 'GET', payload: body }, null, 2))
+    serviceLog('INFO', '[Ollama] request', JSON.stringify({ url: urlString, method: options.method || 'GET', payload: body }, null, 2))
     if (/\/api\/(chat|generate)$/.test(url.pathname)) sendRenderer('ai-prompt-log', { at: new Date().toISOString(), url: urlString, payload: body })
     const request = client.request(url, { method: options.method || 'GET', headers: { ...(body ? { 'Content-Type': 'application/json' } : {}) }, timeout: 120000 }, response => {
       let data = ''
       response.setEncoding('utf8')
       response.on('data', chunk => { data += chunk })
       response.on('end', () => {
-        console.log('[Ollama] response', JSON.stringify({ url: urlString, status: response.statusCode, body: data }, null, 2))
+        serviceLog('INFO', '[Ollama] response', JSON.stringify({ url: urlString, status: response.statusCode, body: data }, null, 2))
         if (response.statusCode < 200 || response.statusCode >= 300) return reject(new Error(`HTTP ${response.statusCode}`))
         try { resolve(JSON.parse(data)) } catch { reject(new Error('Invalid JSON response')) }
       })
     })
-    request.on('error', error => { console.error('[Ollama] request error', error); reject(error) })
-    request.on('timeout', () => { const error = new Error('Ollama request timed out after 120 seconds'); console.error('[Ollama] timeout', error.message); request.destroy(error) })
+    request.on('error', error => { serviceLog('ERROR', '[Ollama] request error', error); reject(error) })
+    request.on('timeout', () => { const error = new Error('Ollama request timed out after 120 seconds'); serviceLog('ERROR', '[Ollama] timeout', error); request.destroy(error) })
     if (body) request.write(JSON.stringify(body))
     request.end()
   })
@@ -119,7 +139,7 @@ async function fetchLatestRelease() {
   const release = candidates.sort((left, right) => compareReleaseVersions(right.tag_name, left.tag_name))[0]
   if (!release) throw new Error('No published GitHub release found')
   const result = { version: releaseVersion(release.tag_name), tag: release.tag_name, url: release.html_url, name: release.name || release.tag_name, notes: release.body || '' }
-  console.log('[Update] latest release', result)
+  serviceLog('INFO', '[Update] latest release', result)
   return result
 }
 function loadWindowState() {
@@ -360,7 +380,8 @@ function createWindow() {
   win.on('close', saveWindowState)
   if (process.env.VITE_DEV_SERVER_URL) win.loadURL(process.env.VITE_DEV_SERVER_URL)
   else win.loadFile(path.join(__dirname, '../dist/index.html'))
-  win.webContents.on('did-fail-load', (_, code, description) => console.error(`Renderer load failed (${code}): ${description}`))
+  win.webContents.on('did-fail-load', (_, code, description) => serviceLog('ERROR', `Renderer load failed (${code}): ${description}`))
+  for (const entry of pendingOperationLogs.splice(0)) win.webContents.send('operation-log', entry)
 }
 async function startWatching(directory) {
   try {
@@ -420,7 +441,7 @@ ipcMain.handle('git-changes', () => currentDirectory ? gitChanges(currentDirecto
 ipcMain.handle('get-settings', () => aiSettings)
 ipcMain.handle('get-app-version', () => app.getVersion())
 ipcMain.handle('open-devtools', () => { if (!app.isPackaged && win && !win.isDestroyed()) win.webContents.openDevTools({ mode: 'detach' }); return !app.isPackaged })
-ipcMain.handle('get-latest-release', async () => { try { return await fetchLatestRelease() } catch (error) { console.error('[Update] release check failed', error.message); throw error } })
+ipcMain.handle('get-latest-release', async () => { try { return await fetchLatestRelease() } catch (error) { serviceLog('ERROR', '[Update] release check failed', error); throw error } })
 ipcMain.handle('open-release', (_, url) => { if (typeof url === 'string' && /^https:\/\/github\.com\//.test(url)) return shell.openExternal(url); return false })
 ipcMain.handle('save-settings', (_, settings) => saveSettings(settings))
 ipcMain.handle('fetch-models', async (_, endpoint) => { const data = await requestJson(`${String(endpoint).replace(/\/$/, '')}/api/tags`); return (data.models || []).map(model => model.name).filter(Boolean) })
@@ -639,9 +660,10 @@ ipcMain.handle('run-shell-command', async (_, command) => {
   if (!currentDirectory) throw new Error('No directory selected')
   const value = String(command || '').trim()
   if (!value) throw new Error('Enter a shell command')
-  sendOperationLog(`PS ${currentDirectory}> ${value}`)
+  const commandShell = shellCommand()
+  sendOperationLog(`${commandShell.label} ${currentDirectory}> ${value}`)
   return new Promise((resolve, reject) => {
-    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', value], { cwd: currentDirectory, windowsHide: true, timeout: 120000, maxBuffer: 32 * 1024 * 1024 }, async (error, stdout, stderr) => {
+    execFile(commandShell.file, [...commandShell.args, value], { cwd: currentDirectory, windowsHide: true, timeout: 120000, maxBuffer: 32 * 1024 * 1024 }, async (error, stdout, stderr) => {
       const output = [stdout, stderr].filter(Boolean).join('').trim()
       if (output) sendOperationLog(output)
       if (error) return reject(new Error(output || error.message))
@@ -653,7 +675,8 @@ ipcMain.handle('run-shell-command', async (_, command) => {
 ipcMain.handle('start-terminal', async (_, directory) => {
   if (!directory || !fs.existsSync(directory)) throw new Error('No directory selected')
   stopTerminal()
-  terminalProcess = pty.spawn('powershell.exe', ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass'], {
+  const commandShell = terminalShell()
+  terminalProcess = pty.spawn(commandShell.file, commandShell.args, {
     name: 'xterm-256color',
     cols: 120,
     rows: 30,
