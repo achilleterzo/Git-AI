@@ -159,12 +159,23 @@ function scheduleSaveWindowState() {
 function shellSnapshot(directory) {
   return new Promise((resolve, reject) => {
     const script = `Get-ChildItem -LiteralPath '${directory.replaceAll("'", "''")}' -File -Recurse -Force | ForEach-Object { @{ path=$_.FullName; size=$_.Length; modified=$_.LastWriteTime.ToString('o') } } | ConvertTo-Json -Compress`
-    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, timeout: 30000, maxBuffer: 32 * 1024 * 1024 }, (error, stdout) => {
-      if (error) return reject(error)
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, timeout: 30000, maxBuffer: 32 * 1024 * 1024 }, (error, stdout, stderr) => {
+      if (error) {
+        const details = String(stderr || '').trim()
+        const diagnostic = new Error(details ? `${error.message}: ${details}` : error.message)
+        diagnostic.code = error.code
+        diagnostic.killed = error.killed
+        diagnostic.signal = error.signal
+        serviceLog('ERROR', '[File scan]', { directory, code: error.code, killed: error.killed, signal: error.signal, stderr: details, command: script })
+        return reject(diagnostic)
+      }
       try {
         const parsed = stdout.trim() ? JSON.parse(stdout) : []
         resolve((Array.isArray(parsed) ? parsed : [parsed]).map((f) => ({ path: f.path, size: Number(f.size), modified: f.modified })))
-      } catch (e) { reject(e) }
+      } catch (e) {
+        serviceLog('ERROR', '[File scan] Invalid PowerShell JSON', { directory, error: e, stdout: stdout.slice(0, 4000) })
+        reject(e)
+      }
     })
   })
 }
@@ -337,6 +348,7 @@ async function publish(reason = 'refresh', generation = watchGeneration) {
       return null
     }
     const scanError = results[0].status === 'rejected' ? `File scan: ${results[0].reason.message}` : null
+    if (scanError) serviceLog('ERROR', scanError, { directory, reason })
     const gitError = results[1].status === 'rejected' ? `Git: ${results[1].reason.message}` : null
     if (directory === currentDirectory && generation === watchGeneration) {
       const aheadBehind = results[2].status === 'fulfilled' ? results[2].value : { incoming: 0, outgoing: 0 }

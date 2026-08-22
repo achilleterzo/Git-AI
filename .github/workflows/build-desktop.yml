@@ -20,11 +20,9 @@ permissions:
   contents: write
 
 jobs:
-  # Decides whether this run should produce a release, and for which tag.
-  # - A direct push of a `v*` tag always releases that tag.
-  # - A push of a `v*` tag releases that exact tag.
-  # - Manual dispatch remains available as a fallback and may create a release
-  #   commit/tag explicitly; pushes to `main` never create releases.
+  # Decides the release tag and synchronizes the package version on main.
+  # A direct `v*` tag is the release trigger; its version commit is then pushed
+  # to main without creating another release trigger.
   version:
     runs-on: ubuntu-latest
     outputs:
@@ -35,13 +33,39 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
       - name: Determine release tag
         id: decide
         run: |
           set -euo pipefail
 
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            echo "release_tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            release_tag="${{ github.ref_name }}"
+            version="${release_tag#v}"
+
+            echo "Synchronizing package version $version on main"
+            git fetch origin main
+            git switch --force-create main origin/main
+
+            npm version "$version" --no-git-tag-version --no-commit-hooks >/dev/null
+            echo "Changed version files:"
+            git status --short -- package.json package-lock.json
+
+            if ! git diff --quiet -- package.json package-lock.json; then
+              git config user.name "github-actions[bot]"
+              git config user.email "github-actions[bot]@users.noreply.github.com"
+              git add package.json package-lock.json
+              git commit -m "chore(release): $release_tag"
+              git push origin main
+            else
+              echo "Package version already matches $version; no version commit required."
+            fi
+
+            echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
