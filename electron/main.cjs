@@ -1,5 +1,5 @@
 const { app, BrowserWindow, dialog, ipcMain, Menu, screen, shell } = require('electron')
-const { execFile, spawn } = require('child_process')
+const { execFile, execFileSync, spawn } = require('child_process')
 const pty = require('node-pty')
 const os = require('os')
 const http = require('http')
@@ -18,6 +18,7 @@ let windowStateTimer
 let aiSettings
 let projects = []
 let terminalProcess
+let terminalSession = 0
 let lastDirectoryDialogPath = ''
 const pendingOperationLogs = []
 const fileIndexCache = new Map()
@@ -41,10 +42,14 @@ function sendRenderer(channel, payload) {
   try { win.webContents.send(channel, JSON.parse(JSON.stringify(payload))) } catch (error) { serviceLog('ERROR', `[IPC] Could not send ${channel}:`, error) }
 }
 
-function stopTerminal() {
-  if (!terminalProcess) return
-  try { terminalProcess.kill() } catch {}
-  terminalProcess = null
+function stopTerminal(sessionId = null) {
+  if (sessionId !== null && sessionId !== terminalSession) return false
+  if (terminalProcess) {
+    try { terminalProcess.kill() } catch {}
+    terminalProcess = null
+  }
+  terminalSession += 1
+  return true
 }
 
 function windowStatePath() { return path.join(app.getPath('userData'), 'window-state.json') }
@@ -125,7 +130,36 @@ function assertAiConfigured() {
   if (!aiSettings?.aiEnabled) throw new Error('AI generation is disabled in Settings')
   if (aiProvider() === 'ollama' && (!providerConfig('ollama').endpoint || !providerConfig('ollama').model)) throw new Error('Configure the Ollama endpoint and model in Settings')
 }
-function cliCommand(provider) { return provider === 'codex' ? 'codex' : 'claude' }
+function knownWindowsCliCommand(name) {
+  if (process.platform !== 'win32') return null
+  const roots = []
+  if (name === 'codex') {
+    for (const root of [process.env.LOCALAPPDATA, process.env.USERPROFILE ? path.join(process.env.USERPROFILE, 'AppData', 'Local') : ''].filter(Boolean)) {
+      const installRoot = path.join(root, 'OpenAI', 'Codex', 'bin')
+      try {
+        for (const entry of fs.readdirSync(installRoot, { withFileTypes: true })) {
+          if (entry.isDirectory()) roots.push(path.join(installRoot, entry.name))
+        }
+      } catch {}
+    }
+  }
+  const npmRoots = [process.env.APPDATA, process.env.USERPROFILE ? path.join(process.env.USERPROFILE, 'AppData', 'Roaming') : '', process.env.npm_config_prefix, process.env.NPM_CONFIG_PREFIX].filter(Boolean).map(root => path.basename(root).toLowerCase() === 'npm' ? root : path.join(root, 'npm'))
+  roots.push(...npmRoots)
+  const names = name === 'codex' ? ['codex.exe', 'codex.cmd', 'codex.bat'] : ['claude.cmd', 'claude.exe', 'claude.bat']
+  const candidates = roots.flatMap(root => names.map(candidate => path.join(root, candidate))).filter(candidate => fs.existsSync(candidate))
+  return candidates.sort((left, right) => {
+    try { return fs.statSync(right).mtimeMs - fs.statSync(left).mtimeMs } catch { return 0 }
+  })[0] || null
+}
+function resolveCliCommand(name) {
+  if (process.platform !== 'win32') return name
+  try {
+    const output = execFileSync('where.exe', [name], { windowsHide: true, timeout: 5000, maxBuffer: 1024 * 1024 }).toString().split(/\r?\n/).map(value => value.trim()).find(Boolean)
+    if (output) return output
+  } catch {}
+  return knownWindowsCliCommand(name) || name
+}
+function cliCommand(provider) { return resolveCliCommand(provider === 'codex' ? 'codex' : 'claude') }
 function quotePowerShellArg(value) { return `'${String(value).replaceAll("'", "''")}'` }
 function cliInvocation(provider, args) {
   const command = cliCommand(provider)
@@ -1162,8 +1196,9 @@ ipcMain.handle('run-shell-command', async (_, command) => {
 ipcMain.handle('start-terminal', async (_, directory) => {
   if (!directory || !fs.existsSync(directory)) throw new Error('No directory selected')
   stopTerminal()
+  const sessionId = terminalSession
   const commandShell = terminalShell()
-  terminalProcess = pty.spawn(commandShell.file, commandShell.args, {
+  const processRef = pty.spawn(commandShell.file, commandShell.args, {
     name: 'xterm-256color',
     cols: 120,
     rows: 30,
@@ -1171,13 +1206,14 @@ ipcMain.handle('start-terminal', async (_, directory) => {
     env: { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' },
     useConpty: true,
   })
-  terminalProcess.onData(data => { if (win && !win.isDestroyed()) win.webContents.send('terminal-data', data) })
-  terminalProcess.onExit(({ exitCode }) => { if (win && !win.isDestroyed()) win.webContents.send('terminal-exit', exitCode); terminalProcess = null })
-  return { ok: true }
+  terminalProcess = processRef
+  processRef.onData(data => { if (terminalSession === sessionId && terminalProcess === processRef && win && !win.isDestroyed()) win.webContents.send('terminal-data', data) })
+  processRef.onExit(({ exitCode }) => { if (terminalSession === sessionId && terminalProcess === processRef) { if (win && !win.isDestroyed()) win.webContents.send('terminal-exit', exitCode); terminalProcess = null } })
+  return { ok: true, sessionId }
 })
-ipcMain.handle('write-terminal', (_, data) => { if (terminalProcess && typeof data === 'string') terminalProcess.write(data); return true })
-ipcMain.handle('resize-terminal', (_, { cols, rows } = {}) => { if (terminalProcess) terminalProcess.resize(Math.max(20, Number(cols) || 120), Math.max(5, Number(rows) || 30)); return true })
-ipcMain.handle('stop-terminal', () => { stopTerminal(); return true })
+ipcMain.handle('write-terminal', (_, data, sessionId) => { if (terminalProcess && sessionId === terminalSession && typeof data === 'string') terminalProcess.write(data); return true })
+ipcMain.handle('resize-terminal', (_, { cols, rows } = {}, sessionId) => { if (terminalProcess && sessionId === terminalSession) terminalProcess.resize(Math.max(20, Number(cols) || 120), Math.max(5, Number(rows) || 30)); return true })
+ipcMain.handle('stop-terminal', (_, sessionId) => { stopTerminal(sessionId ?? null); return true })
 ipcMain.handle('commit-selected', async (_, { files, message, amend = false }) => {
   if (!currentDirectory) throw new Error('No directory selected')
   const selected = Array.isArray(files) ? files.filter(file => typeof file === 'string' && file && !file.includes('..')) : []

@@ -28,7 +28,7 @@ aside { border-color:#30343a; background:#1b1e21 }
 .project-picker { gap:0; padding-left:0 }.project-picker .project-react-select { padding-left:10px }
 .project-react-select { flex:1; min-width:0 }.project-option-label,.project-single-value { display:flex; align-items:center; gap:8px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#f3f4f6 }.project-option-label img,.project-single-value img { width:22px; height:22px; flex:0 0 22px; object-fit:contain; border-radius:4px }.project-select__single-value { color:#f3f4f6 !important }.project-remove { padding:0 5px; color:#aeb5bd; background:transparent; font-size:18px; line-height:1 }.project-remove:hover { color:#fb7185 }
 .project-select__single-value { color:#e5e7eb !important }.project-select__placeholder { color:#aeb5bd !important }.project-select__input-container { color:#e5e7eb !important }
-.project-select__menu,.project-select__menu-list,.project-select__option { color:#f3f4f6 !important; background:#24272a !important }.project-select__option--is-focused { background:#343a3f !important }.project-select__option { cursor:pointer !important }
+.project-select__menu,.project-select__menu-list,.project-select__option { color:#f3f4f6 !important; background:#24272a !important }.project-select__option:hover,.project-select__option--is-focused { background:#343a3f !important }.project-select__option { cursor:pointer !important }
 .commit-button { color:#d9fdf5; border:1px solid #41645f }
 .folder-button { order:2; width:38px; height:34px; flex:0 0 38px; padding:0; border-left:1px solid #3b4147; border-right:0; border-radius:0; background:transparent; color:#d7dde2; display:grid; place-items:center }.folder-button svg { display:none }.folder-button::after { content:'↗'; font-size:22px; line-height:1; font-weight:500 }.folder-button:hover { color:#5eead4; background:#30353a }
 .project-react-select { order:1 }
@@ -235,6 +235,9 @@ aside { border-color:#30343a; background:#1b1e21 }
 .settings-endpoint-group button { flex:0 0 auto; min-height:38px; }
 .settings-endpoint-group .settings-connected { border-color:#4b716d; background:#203a38; color:#5eead4; }
 .settings-provider-status { display:flex; align-items:center; justify-content:space-between; gap:14px; padding:12px; border:1px solid #373b41; border-radius:8px; background:#1a1d20; }
+.settings-provider-status.connected { border-color:#4b716d; background:#203a38; box-shadow:inset 3px 0 0 #5eead4; }
+.settings-provider-status.connected strong { color:#cafff5; }
+.settings-provider-status.connected small { color:#9bd8cd; }
 .settings-provider-status > div:first-child { display:grid; gap:4px; min-width:0; }
 .settings-provider-status small { color:#9aa1aa; font-size:10px; line-height:1.4; text-transform:none; letter-spacing:0; }
 .settings-provider-actions { display:flex; flex:0 0 auto; gap:7px; }

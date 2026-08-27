@@ -7,6 +7,7 @@ export default function TerminalConsole({ directory, visible = true }) {
   const containerRef = useRef(null)
   const terminalRef = useRef(null)
   const fitRef = useRef(null)
+  const sessionRef = useRef(null)
 
   useEffect(() => {
     if (!containerRef.current || !directory) return undefined
@@ -26,15 +27,20 @@ export default function TerminalConsole({ directory, visible = true }) {
     fitRef.current = fit
     const focusTerminal = () => terminal.focus()
     containerRef.current.addEventListener('click', focusTerminal)
-    const resize = () => { fit.fit(); window.directoryAPI.resizeTerminal({ cols: terminal.cols, rows: terminal.rows }) }
+    const resize = () => { fit.fit(); if (sessionRef.current !== null) void window.directoryAPI.resizeTerminal({ cols: terminal.cols, rows: terminal.rows }, sessionRef.current) }
     const dataCleanup = window.directoryAPI.onTerminalData(data => terminal.write(data))
     const exitCleanup = window.directoryAPI.onTerminalExit(() => terminal.write('\r\n[Process exited]\r\n'))
-    const input = terminal.onData(data => { void window.directoryAPI.writeTerminal(data) })
+    const input = terminal.onData(data => { if (sessionRef.current !== null) void window.directoryAPI.writeTerminal(data, sessionRef.current) })
     const observer = new ResizeObserver(resize)
     observer.observe(containerRef.current)
-    window.directoryAPI.startTerminal(directory).then(resize).catch(error => terminal.write(`\r\n\x1b[31m${error.message}\x1b[0m\r\n`))
+    let disposed = false
+    window.directoryAPI.startTerminal(directory).then(result => {
+      if (disposed) { if (result?.sessionId !== undefined) void window.directoryAPI.stopTerminal(result.sessionId); return }
+      sessionRef.current = result?.sessionId ?? null
+      resize()
+    }).catch(error => terminal.write(`\r\n\x1b[31m${error.message}\x1b[0m\r\n`))
     resize()
-    return () => { observer.disconnect(); input.dispose(); dataCleanup?.(); exitCleanup?.(); containerRef.current?.removeEventListener('click', focusTerminal); terminalRef.current = null; fitRef.current = null; window.directoryAPI.stopTerminal(); terminal.dispose() }
+    return () => { disposed = true; observer.disconnect(); input.dispose(); dataCleanup?.(); exitCleanup?.(); containerRef.current?.removeEventListener('click', focusTerminal); const sessionId = sessionRef.current; sessionRef.current = null; if (sessionId !== null) void window.directoryAPI.stopTerminal(sessionId); terminalRef.current = null; fitRef.current = null; terminal.dispose() }
   }, [directory])
 
   useEffect(() => {
