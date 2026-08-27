@@ -710,6 +710,7 @@ async function startWatching(directory) {
   if (watcher) { watcher.close(); watcher = null }
   if (publishTimer) { clearTimeout(publishTimer); publishTimer = null }
   watchGeneration += 1
+  const generation = watchGeneration
   publishQueued = false
   currentDirectory = ''
   try {
@@ -724,8 +725,8 @@ async function startWatching(directory) {
     }
     throw error
   }
+  if (generation !== watchGeneration) return { ok: false, code: 'WATCH_SUPERSEDED' }
   currentDirectory = directory
-  const generation = watchGeneration
   watcher = fs.watch(directory, { recursive: true }, (_, filename) => {
     if (generation !== watchGeneration) return
     const changedPath = filename ? String(filename).replaceAll('\\', '/') : ''
@@ -745,8 +746,7 @@ ipcMain.handle('choose-project-icon', async (_, projectDirectory) => { const def
 ipcMain.handle('get-project-icon', (_, directory) => directory ? findProjectIcon(directory) : null)
 ipcMain.handle('start-watching', async (_, directory) => {
   try {
-    await startWatching(directory)
-    return { ok: true }
+    return await startWatching(directory) || { ok: true }
   } catch (error) {
     // Expected setup state must cross IPC as data; Electron does not preserve
     // custom Error properties such as `code` when rejecting invoke().
