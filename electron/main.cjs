@@ -154,8 +154,10 @@ function knownWindowsCliCommand(name) {
 function resolveCliCommand(name) {
   if (process.platform !== 'win32') return name
   try {
-    const output = execFileSync('where.exe', [name], { windowsHide: true, timeout: 5000, maxBuffer: 1024 * 1024 }).toString().split(/\r?\n/).map(value => value.trim()).find(Boolean)
-    if (output) return output
+    const outputs = execFileSync('where.exe', [name], { windowsHide: true, timeout: 5000, maxBuffer: 1024 * 1024 }).toString().split(/\r?\n/).map(value => value.trim()).filter(Boolean)
+    const nativeCommand = outputs.find(value => ['.exe', '.cmd', '.bat'].includes(path.extname(value).toLowerCase()))
+    if (nativeCommand) return nativeCommand
+    if (outputs[0]) return outputs[0]
   } catch {}
   return knownWindowsCliCommand(name) || name
 }
@@ -283,7 +285,7 @@ async function loginAiProvider(provider = aiProvider()) {
   if (availability.missing) throw new Error(`${AI_PROVIDER_LABELS[selected]} client not found. Install it and try again.`)
   const args = selected === 'codex' ? ['login'] : ['auth', 'login']
   const invocation = cliInvocation(selected, args)
-  const child = spawn(invocation.command, invocation.args, { cwd: currentDirectory || undefined, env: cliEnvironment(selected), detached: true, windowsHide: false, shell: invocation.shell, stdio: 'ignore' })
+  const child = spawn(invocation.command, invocation.args, { cwd: currentDirectory || undefined, env: cliEnvironment(selected), detached: true, windowsHide: true, shell: invocation.shell, stdio: 'ignore' })
   child.once('error', error => serviceLog('ERROR', `[${AI_PROVIDER_LABELS[selected]}] login process failed`, error))
   child.unref()
   return { started: true, provider: selected }
