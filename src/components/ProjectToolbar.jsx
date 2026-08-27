@@ -12,8 +12,9 @@ function projectName(project) {
 }
 
 export default function ProjectToolbar({ directory, projects, choose, selectProject, removeProjectOption, active, stop, resume, defaultPathIcon }) {
-  const currentProject = projects.find(project => project.path === directory)
-  const options = projects.map(project => ({ value: project.path, label: projectName(project), fullPath: project.path, icon: project.icon || defaultPathIcon }))
+  const currentProject = projects.find(project => project.path === directory) || (directory ? { path: directory } : null)
+  const projectOptions = projects.some(project => project.path === directory) || !directory ? projects : [currentProject, ...projects]
+  const options = projectOptions.map(project => ({ value: project.path, label: projectName(project), fullPath: project.path, icon: project.icon || defaultPathIcon }))
 
   return (
     <div className="toolbar">

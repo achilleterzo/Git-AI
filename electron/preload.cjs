@@ -18,6 +18,8 @@ contextBridge.exposeInMainWorld('directoryAPI', {
   getProjectAssistantContext: () => ipcRenderer.invoke('get-project-assistant-context'),
   generateProjectPlan: (instruction) => ipcRenderer.invoke('generate-project-plan', String(instruction || '')),
   applyProjectPlan: (changes) => ipcRenderer.invoke('apply-project-plan', changes),
+  addGitignoreEntry: (kind, value) => ipcRenderer.invoke('add-gitignore-entry', { kind: String(kind || ''), value: String(value || '') }),
+  addGitignoreSelection: (entries) => ipcRenderer.invoke('add-gitignore-selection', { entries: Array.isArray(entries) ? entries : [] }),
   generateCommitMessage: (files, operation = 'commit') => ipcRenderer.invoke('generate-commit-message', { files: Array.isArray(files) ? files.map(file => String(file)) : [], operation: String(operation || 'commit') }),
   getDiff: (file) => ipcRenderer.invoke('get-diff', file),
   getStashes: () => ipcRenderer.invoke('get-stashes'),
@@ -31,6 +33,7 @@ contextBridge.exposeInMainWorld('directoryAPI', {
   stashSelected: (files, message) => ipcRenderer.invoke('stash-selected', { files, message }),
   openInExplorer: () => ipcRenderer.invoke('open-in-explorer'),
   commitSelected: (files, message, amend = false) => ipcRenderer.invoke('commit-selected', { files: Array.isArray(files) ? files.map(file => String(file)) : [], message: String(message || ''), amend: Boolean(amend) }),
+  moveSelected: (files) => ipcRenderer.invoke('move-selected', { files: Array.isArray(files) ? files.map(file => String(file)) : [] }),
   refresh: () => ipcRenderer.invoke('refresh'),
   runShellCommand: (command) => ipcRenderer.invoke('run-shell-command', command),
   startTerminal: (directory) => ipcRenderer.invoke('start-terminal', directory),
@@ -64,6 +67,7 @@ contextBridge.exposeInMainWorld('directoryAPI', {
   onOpenProjectAssistant: (callback) => { ipcRenderer.on('open-project-assistant', callback) },
   onOpenAbout: (callback) => { ipcRenderer.on('open-about', callback) },
   onUpdate: (callback) => { ipcRenderer.on('directory-update', (_, data) => callback(data)) }
+  ,onFileIndexUpdate: (callback) => { ipcRenderer.on('file-index-update', (_, data) => callback(data)) }
   ,onOperationLog: (callback) => { ipcRenderer.on('operation-log', (_, data) => callback(data)) }
   ,onOperationProgress: (callback) => { ipcRenderer.on('operation-progress', (_, data) => callback(data)) }
   ,onAiPrompt: (callback) => { ipcRenderer.on('ai-prompt-log', (_, data) => callback(data)) }

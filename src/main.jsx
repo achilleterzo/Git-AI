@@ -25,7 +25,7 @@ const OPERATION_TIMEOUT_MS = 180000
 
 function App() {
   const [directory, setDirectory] = useState('')
-  const [files, setFiles] = useState([])
+  const [fileIndexing, setFileIndexing] = useState({ status: 'idle', error: null })
   const [changes, setChanges] = useState([])
   const [query, setQuery] = useState('')
   const [active, setActive] = useState(false)
@@ -97,8 +97,9 @@ function App() {
   useEffect(() => { window.directoryAPI.onOperationLog(data => setConsoleLines(lines => [...lines, { ...data, message: String(data?.message || '') }].slice(-300))); return undefined }, [])
   useEffect(() => { window.directoryAPI.onAiPrompt(data => setAiPromptLog(data)); return undefined }, [])
   useEffect(() => { window.directoryAPI.onOperationProgress(data => { if (progressHandlerRef.current) progressHandlerRef.current(data) }); return undefined }, [])
+  useEffect(() => { window.directoryAPI.onFileIndexUpdate(data => { setFileIndexing({ status: String(data.status || 'idle'), error: data.error || null, updatedAt: data.updatedAt || null }) }); return undefined }, [])
   useEffect(() => { window.directoryAPI.onUpdate(data => {
-    setFiles(data.files || [])
+    if (data.indexing) setFileIndexing(current => ({ ...current, status: String(data.indexing) }))
     setChanges(data.changes || [])
     setIncomingCommits(Number(data.incomingCommits) || 0)
     setOutgoingCommits(Number(data.outgoingCommits) || 0)
@@ -160,15 +161,15 @@ function App() {
     armOperationWatchdog(id, label)
     try { return await task() } finally { closeOperation(id) }
   }
-  async function openSelectedDirectory(path, project) { const metadata = project || { path }; const targetView = view === 'home' ? 'changes' : view; const previousView = view; setDirectory(path); setProjectIcon(metadata.icon || null); setCurrentBranch(''); setIncomingCommits(0); setOutgoingCommits(0); setGitLfs(Boolean(metadata.gitLfs)); setActive(false); setStarting(true); setFiles([]); setChanges([]); setSelected(new Set()); setStashes([]); setEmptyDirectory(''); setCheckoutRemote(''); setView(targetView); try { await window.directoryAPI.startWatching(path); setProjects(normalizeProjects(await window.directoryAPI.addProject(metadata))); return true } catch (error) { const message = String(error?.message || error || ''); if (error?.code === 'EMPTY_DIRECTORY_NOT_REPOSITORY' || message.includes('empty and is not a Git repository')) { setProjects(normalizeProjects(await window.directoryAPI.addProject(metadata))); setActive(false); setStarting(false); setEmptyDirectory(path); setProjectModal(false); return false } setStarting(false); setView(previousView); setErrorModal(message); return false } }
+  async function openSelectedDirectory(path, project) { const metadata = project || { path }; const targetView = view === 'home' ? 'changes' : view; const previousView = view; setDirectory(path); setProjectIcon(metadata.icon || null); setFileIndexing({ status: 'idle', error: null }); setCurrentBranch(''); setIncomingCommits(0); setOutgoingCommits(0); setGitLfs(Boolean(metadata.gitLfs)); setActive(false); setStarting(true); setChanges([]); setSelected(new Set()); setStashes([]); setEmptyDirectory(''); setCheckoutRemote(''); setView(targetView); try { const watchResult = await window.directoryAPI.startWatching(path); if (watchResult?.ok === false && watchResult.code === 'NOT_A_GIT_REPOSITORY') { setProjects(normalizeProjects(await window.directoryAPI.addProject(metadata))); setActive(false); setStarting(false); setEmptyDirectory(path); setProjectModal(false); return false } setProjects(normalizeProjects(await window.directoryAPI.addProject(metadata))); return true } catch (error) { const message = String(error?.message || error || ''); setStarting(false); setView(previousView); setErrorModal(message); return false } }
   async function saveProject() { if (!projectDraft.path) return; const editing = Boolean(projectEditingPath); const project = { ...projectDraft, name: projectDraft.name.trim() || projectName({ path: projectDraft.path }), ...(editing ? {} : { lastOpened: Date.now() }) }; try { await runOperation(editing ? 'Saving project…' : 'Loading project…', async () => { if (editing) { if (projectEditingPath !== projectDraft.path) { await window.directoryAPI.removeProject(projectEditingPath); setProjects(normalizeProjects(await window.directoryAPI.addProject(project))) } else setProjects(normalizeProjects(await window.directoryAPI.updateProject(projectEditingPath, project))); setProjectModal(false) } else if (await openSelectedDirectory(projectDraft.path, project)) setProjectModal(false); setProjectEditingPath('') }) } catch (error) { setErrorModal(String(error?.message || error)) } }
   async function selectProject(option) { if (!option?.value) return; try { await openSelectedDirectory(option.value, { path: option.value, lastOpened: Date.now() }) } catch (error) { setStarting(false); setErrorModal(String(error?.message || error)) } }
   async function initializeEmptyDirectory() { try { await runOperation('Initializing Git…', async () => { await window.directoryAPI.initializeRepository(emptyDirectory); setProjects(normalizeProjects(await window.directoryAPI.addProject({ path: emptyDirectory, lastOpened: Date.now() }))); setEmptyDirectory(''); setView('changes') }) } catch (error) { setErrorModal(String(error?.message || error)) } }
   async function checkoutEmptyDirectory() { try { await runOperation('Checking out repository…', async () => { await window.directoryAPI.checkoutRepository(emptyDirectory, checkoutRemote); setProjects(normalizeProjects(await window.directoryAPI.addProject({ path: emptyDirectory, lastOpened: Date.now() }))); setEmptyDirectory(''); setView('changes') }, { trackProgress: true }) } catch (error) { setErrorModal(String(error?.message || error)) } }
   async function openHomeProject(project) { setView('changes'); await selectProject({ value: project.path }) }
-  async function removeProjectOption(option) { if (!option || !window.confirm(`Remove "${option.value}" from the project list?\nNo files will be deleted.`)) return; try { const isCurrent = directory === option.value || emptyDirectory === option.value; if (directory === option.value) await window.directoryAPI.stopWatching(); setProjects(normalizeProjects(await window.directoryAPI.removeProject(option.value))); if (isCurrent) { setDirectory(''); setActive(false); setFiles([]); setChanges([]); setGitLfs(false); setEmptyDirectory(''); setSelected(new Set()); setView('home') } } catch (error) { setErrorModal(error.message) } }
-  async function resume() { if (!directory) return; setStarting(true); try { await window.directoryAPI.startWatching(directory) } catch (error) { setStarting(false); setErrorModal(String(error?.message || error)) } }
-  async function stop() { await window.directoryAPI.stopWatching(); setActive(false); setStarting(false); setFiles([]); setChanges([]); setSelected(new Set()); setLastEvent('Monitor stopped') }
+  async function removeProjectOption(option) { if (!option || !window.confirm(`Remove "${option.value}" from the project list?\nNo files will be deleted.`)) return; try { const isCurrent = directory === option.value || emptyDirectory === option.value; if (directory === option.value) await window.directoryAPI.stopWatching(); setProjects(normalizeProjects(await window.directoryAPI.removeProject(option.value))); if (isCurrent) { setDirectory(''); setActive(false); setChanges([]); setGitLfs(false); setEmptyDirectory(''); setSelected(new Set()); setView('home') } } catch (error) { setErrorModal(error.message) } }
+  async function resume() { if (!directory) return; setStarting(true); try { const watchResult = await window.directoryAPI.startWatching(directory); if (watchResult?.ok === false && watchResult.code === 'NOT_A_GIT_REPOSITORY') { setActive(false); setStarting(false); setEmptyDirectory(directory) } } catch (error) { setStarting(false); setErrorModal(String(error?.message || error)) } }
+  async function stop() { await window.directoryAPI.stopWatching(); setActive(false); setStarting(false); setChanges([]); setSelected(new Set()); setLastEvent('Monitor stopped') }
   function toggleFolder(path) { setExpanded(value => { const next = new Set(value); next.has(path) ? next.delete(path) : next.add(path); return next }) }
   function expandAllFolders() { setExpanded(value => new Set([...value, ...changes.flatMap(change => { const parts = change.file.replaceAll('\\', '/').split('/').filter(Boolean); return parts.slice(0, -1).map((_, index) => parts.slice(0, index + 1).join('/')) })])) }
   function collapseAllFolders() { setExpanded(new Set()) }
@@ -180,6 +181,9 @@ function App() {
   async function generateStashMergeMessage() { setPendingOperation('stash-merge'); setAiBusy(true); setAiError(''); try { setAiMessage(await runOperation('Generating stash merge message…', () => window.directoryAPI.generateStashMergeMessage(selectedStashes.map(stash => stash.ref)))) } catch (error) { setAiError(error.message); setErrorModal(error.message) } finally { setAiBusy(false) } }
   async function openDiff(file) { try { setDiffModal({ file, diff: await window.directoryAPI.getDiff(file) }) } catch (error) { setErrorModal(error.message) } }
   async function commitSelected() { const amend = pendingOperation === 'amend'; setAiBusy(true); setAiError(''); try { await runOperation(amend ? 'Amending commit…' : 'Creating commit…', () => window.directoryAPI.commitSelected([...selected], aiMessage, amend)); setAiMessage(''); setSelected(new Set()); setLastEvent(amend ? 'Commit amended' : 'Commit completed') } catch (error) { setAiError(error.message); setErrorModal(error.message) } finally { setAiBusy(false) } }
+  async function moveSelected(files) { setGitBusy(true); try { await runOperation('Preparing file move…', () => window.directoryAPI.moveSelected(files)); setSelected(new Set()); setLastEvent('File move prepared for commit') } catch (error) { setErrorModal(error.message) } finally { setGitBusy(false) } }
+  async function addGitignoreEntry(kind, value) { setGitBusy(true); try { const result = await runOperation('Updating .gitignore…', () => window.directoryAPI.addGitignoreEntry(kind, value)); setLastEvent(result?.added ? `Added ${result.pattern} to .gitignore` : `${result.pattern} is already in .gitignore`) } catch (error) { setErrorModal(String(error?.message || error)) } finally { setGitBusy(false) } }
+  async function addGitignoreSelection(entries) { setGitBusy(true); try { const result = await runOperation('Updating .gitignore…', () => window.directoryAPI.addGitignoreSelection(entries)); setLastEvent(`Added ${result?.added || 0} selected ignore rule${result?.added === 1 ? '' : 's'} to .gitignore`) } catch (error) { setErrorModal(String(error?.message || error)) } finally { setGitBusy(false) } }
   async function stashSelected() { setAiBusy(true); setAiError(''); try { await runOperation('Creating stash…', () => window.directoryAPI.stashSelected([...selected], aiMessage)); setAiMessage(''); setSelected(new Set()); setLastEvent('Stash created'); setStashes(await window.directoryAPI.getStashes()) } catch (error) { setAiError(error.message); setErrorModal(error.message) } finally { setAiBusy(false) } }
   async function restoreStash({ partialRef = '', files = [] } = {}) { if (!selectedStashes.length && !(partialRef && files.length)) return; setGitBusy(true); try { await runOperation(files.length ? `Recovering ${files.length} stash file${files.length > 1 ? 's' : ''}…` : `Recovering ${selectedStashes.length} stash${selectedStashes.length > 1 ? 'es' : ''}…`, async () => { if (files.length && partialRef) await window.directoryAPI.unstashFiles(partialRef, files); else if (selectedStashes.length > 1) await window.directoryAPI.unstashMany(selectedStashes.map(stash => stash.ref)); else await window.directoryAPI.unstash(selectedStashes[0].ref) }); if (!files.length) setSelectedStashes([]); setStashes(await window.directoryAPI.getStashes()) } catch (error) { setErrorModal(error.message) } finally { setGitBusy(false) } }
   async function mergeStashes() { setAiBusy(true); setAiError(''); try { await runOperation('Merging stashes…', () => window.directoryAPI.mergeStashes(selectedStashes.map(stash => stash.ref), aiMessage)); setAiMessage(''); setSelectedStashes([]); setStashes(await window.directoryAPI.getStashes()) } catch (error) { setAiError(error.message); setErrorModal(error.message) } finally { setAiBusy(false) } }
@@ -228,10 +232,14 @@ function App() {
     aiBusy,
     gitBusy,
     generateCommitMessage,
+    moveSelected,
+    addGitignoreEntry,
+    addGitignoreSelection,
     aiEnabled: settings.aiEnabled,
     runGitRemote,
     requestPush,
     changes,
+    fileIndexing,
     query,
     setQuery,
     expanded,
@@ -250,7 +258,7 @@ function App() {
       history: <HistoryPage {...pageProps} runOperation={runOperation} setErrorModal={setErrorModal} />,
       lfs: <LfsPage {...pageProps} loading={loading} runOperation={runOperation} setErrorModal={setErrorModal} />,
     }
-    return <><header className="page-header page-header-compact"><span className="eyebrow">WORKSPACE / MONITOR</span><WatchingPill active={active} starting={starting} directory={directory} stop={stop} resume={resume} /></header>{pages[view] || pages.changes}</>
+    return <><header className="page-header page-header-compact"><span className="eyebrow">WORKSPACE / MONITOR</span><WatchingPill active={active} starting={starting} indexing={fileIndexing.status === 'indexing'} directory={directory} stop={stop} resume={resume} /></header>{pages[view] || pages.changes}</>
   }
 
   return (

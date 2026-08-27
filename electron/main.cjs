@@ -20,6 +20,8 @@ let projects = []
 let terminalProcess
 let lastDirectoryDialogPath = ''
 const pendingOperationLogs = []
+const fileIndexCache = new Map()
+const FILE_INDEX_DEBOUNCE_MS = 250
 
 const PUBLISH_DEBOUNCE_MS = 200
 
@@ -158,7 +160,11 @@ function scheduleSaveWindowState() {
 
 function shellSnapshot(directory) {
   return new Promise((resolve, reject) => {
-    const script = `Get-ChildItem -LiteralPath '${directory.replaceAll("'", "''")}' -File -Recurse -Force | ForEach-Object { @{ path=$_.FullName; size=$_.Length; modified=$_.LastWriteTime.ToString('o') } } | ConvertTo-Json -Compress`
+    // Index only files known to Git (tracked or non-ignored untracked files).
+    // A recursive filesystem scan would repeatedly walk node_modules, build
+    // output and other ignored directories that cannot affect Git status.
+    const escapedDirectory = directory.replaceAll("'", "''")
+    const script = `$gitRoot = (git -C '${escapedDirectory}' rev-parse --show-toplevel).Trim(); git -C '${escapedDirectory}' ls-files --cached --others --exclude-standard --full-name | ForEach-Object { $absolute = Join-Path $gitRoot $_; if (Test-Path -LiteralPath $absolute -PathType Leaf) { $item = Get-Item -LiteralPath $absolute -Force -ErrorAction SilentlyContinue; if ($item) { @{ path=$item.FullName; size=$item.Length; modified=$item.LastWriteTime.ToString('o') } } } } | ConvertTo-Json -Compress`
     execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, timeout: 30000, maxBuffer: 32 * 1024 * 1024 }, (error, stdout, stderr) => {
       if (error) {
         const details = String(stderr || '').trim()
@@ -179,12 +185,73 @@ function shellSnapshot(directory) {
     })
   })
 }
+function getFileIndexState(directory) {
+  let state = fileIndexCache.get(directory)
+  if (!state) {
+    state = { files: [], status: 'idle', error: null, requested: 0, running: false, queued: false, timer: null, updatedAt: null, gitSignature: null }
+    fileIndexCache.set(directory, state)
+  }
+  return state
+}
+function sendFileIndexUpdate(directory, state) {
+  if (directory !== currentDirectory) return
+  // The renderer only needs the indexing state. Keeping the full file cache in
+  // the main process avoids cloning thousands of entries across IPC.
+  sendRenderer('file-index-update', { directory, status: state.status, error: state.error, updatedAt: state.updatedAt })
+}
+function scheduleFileIndexing(directory, generation = watchGeneration) {
+  if (!directory || directory !== currentDirectory || generation !== watchGeneration) return
+  const state = getFileIndexState(directory)
+  state.requested += 1
+  if (state.running) { state.queued = true; return }
+  if (state.timer) clearTimeout(state.timer)
+  state.timer = setTimeout(() => {
+    state.timer = null
+    runFileIndexing(directory, generation)
+  }, FILE_INDEX_DEBOUNCE_MS)
+}
+async function runFileIndexing(directory, generation) {
+  if (!directory || directory !== currentDirectory || generation !== watchGeneration) return
+  const state = getFileIndexState(directory)
+  if (state.running) { state.queued = true; return }
+  state.running = true
+  state.queued = false
+  const request = state.requested
+  state.status = 'indexing'
+  state.error = null
+  sendFileIndexUpdate(directory, state)
+  try {
+    state.files = await shellSnapshot(directory)
+    state.status = 'ready'
+    state.error = null
+    state.updatedAt = new Date().toISOString()
+    sendFileIndexUpdate(directory, state)
+  } catch (error) {
+    // An indexing failure must not affect Git status or the repository UI.
+    state.status = 'error'
+    state.error = String(error?.message || error)
+    sendFileIndexUpdate(directory, state)
+  } finally {
+    state.running = false
+    if (directory === currentDirectory && generation === watchGeneration && (state.queued || state.requested !== request)) {
+      state.queued = false
+      scheduleFileIndexing(directory, generation)
+    }
+  }
+}
 function gitChanges(directory) {
   return new Promise((resolve, reject) => execFile('git', ['-C', directory, 'status', '--porcelain=v1', '--untracked-files=all'], { windowsHide: true, timeout: 30000, maxBuffer: 128 * 1024 * 1024 }, (error, stdout, stderr) => {
     if (error) return reject(new Error(stderr.trim() || error.message))
     resolve(stdout.split(/\r?\n/).filter(Boolean).map(line => {
       const code = line.slice(0, 2)
-      const file = line.slice(3).replace(/^"|"$/g, '')
+      let file = line.slice(3)
+      // Porcelain v1 renders renames as: "old path" -> "new path".
+      // The UI and subsequent git commands must receive only the destination.
+      if (code.includes('R') || code.includes('C')) {
+        const arrow = file.lastIndexOf(' -> ')
+        if (arrow >= 0) file = file.slice(arrow + 4)
+      }
+      file = file.replace(/^"|"$/g, '')
       return { file, code, status: code === '??' || code.includes('A') ? 'Added' : code.includes('D') ? 'Deleted' : 'Modified' }
     }))
   }))
@@ -199,7 +266,32 @@ function isDirectoryEmpty(directory) {
   return fs.readdirSync(directory).length === 0
 }
 function runGit(directory, args, timeout = 120000) {
-  return new Promise((resolve, reject) => execFile('git', ['-C', directory, ...args], { windowsHide: true, timeout, maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => error ? reject(new Error(stderr.trim() || stdout.trim() || error.message)) : resolve(stdout.trim())) )
+  return new Promise((resolve, reject) => execFile('git', ['-C', directory, ...args], { windowsHide: true, timeout, maxBuffer: 128 * 1024 * 1024 }, (error, stdout, stderr) => error ? reject(new Error(stderr.trim() || stdout.trim() || error.message)) : resolve(stdout.trim())) )
+}
+function runGitWithPathspec(directory, args, paths, timeout = 120000) {
+  const tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'pulse-git-pathspec-'))
+  const pathspecFile = path.join(tempDirectory, 'paths')
+  fs.writeFileSync(pathspecFile, Buffer.from(paths.map(value => String(value)).join('\0'), 'utf8'))
+  return new Promise((resolve, reject) => execFile('git', ['-C', directory, ...args, `--pathspec-from-file=${pathspecFile}`, '--pathspec-file-nul'], { windowsHide: true, timeout, maxBuffer: 128 * 1024 * 1024, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }, (error, stdout, stderr) => error ? reject(new Error(stderr.trim() || stdout.trim() || error.message)) : resolve(stdout.trim()))).finally(() => {
+    try { fs.rmSync(tempDirectory, { recursive: true, force: true }) } catch {}
+  })
+}
+function parseNumstat(output) {
+  return String(output || '').split('\0').map(record => {
+    const firstTab = record.indexOf('\t')
+    const secondTab = firstTab < 0 ? -1 : record.indexOf('\t', firstTab + 1)
+    if (firstTab < 0 || secondTab < 0) return null
+    return { added: record.slice(0, firstTab), deleted: record.slice(firstTab + 1, secondTab), file: record.slice(secondTab + 1) }
+  }).filter(record => record?.file)
+}
+async function gitDiffForFile(directory, file, hasCommits = null) {
+  const repositoryHasCommits = hasCommits === null ? await gitHasCommits(directory) : hasCommits
+  if (repositoryHasCommits) return runGit(directory, ['diff', 'HEAD', '--unified=2', '--', file], 30000).catch(() => 'No diff available for this file.')
+  const [cached, workingTree] = await Promise.all([
+    runGit(directory, ['diff', '--cached', '--unified=2', '--', file], 30000).catch(() => ''),
+    runGit(directory, ['diff', '--unified=2', '--', file], 30000).catch(() => '')
+  ])
+  return [cached, workingTree].filter(Boolean).join('\n') || 'No diff available for this file.'
 }
 function runGitWithEnv(directory, args, env, timeout = 120000) {
   return new Promise((resolve, reject) => execFile('git', ['-C', directory, ...args], { windowsHide: true, timeout, maxBuffer: 16 * 1024 * 1024, env: { ...process.env, ...env } }, (error, stdout, stderr) => error ? reject(new Error(stderr.trim() || stdout.trim() || error.message)) : resolve(stdout.trim())))
@@ -334,9 +426,14 @@ async function publish(reason = 'refresh', generation = watchGeneration) {
   publishRunning = true
   const directory = currentDirectory
   try {
-    const results = await Promise.allSettled([shellSnapshot(directory), gitChanges(directory), gitAheadBehind(directory), gitCurrentBranch(directory), gitLfsAvailable(directory), gitHasCommits(directory)])
-    const files = results[0].status === 'fulfilled' ? results[0].value : []
-    const changes = results[1].status === 'fulfilled' ? results[1].value : []
+    // Git state must not wait for the best-effort filesystem index.
+    const results = await Promise.allSettled([gitChanges(directory), gitAheadBehind(directory), gitCurrentBranch(directory), gitLfsAvailable(directory), gitHasCommits(directory)])
+    const changes = results[0].status === 'fulfilled' ? results[0].value : []
+    const indexState = getFileIndexState(directory)
+    const gitSignature = changes.map(change => `${change.code}\0${change.file}`).join('\0')
+    const gitStateChanged = indexState.gitSignature !== gitSignature
+    indexState.gitSignature = gitSignature
+    if (gitStateChanged) scheduleFileIndexing(directory, generation)
     if (!fs.existsSync(directory)) {
       if (watcher) watcher.close()
       if (publishTimer) { clearTimeout(publishTimer); publishTimer = null }
@@ -347,17 +444,15 @@ async function publish(reason = 'refresh', generation = watchGeneration) {
       sendRenderer('directory-update', { directory: '', removedDirectory: directory, projectIcon: null, files: [], changes: [], incomingCommits: 0, outgoingCommits: 0, branch: '', gitLfs: false, hasCommits: false, gitOk: false, reason: 'directory-removed', error: null, at: new Date().toISOString() })
       return null
     }
-    const scanError = results[0].status === 'rejected' ? `File scan: ${results[0].reason.message}` : null
-    if (scanError) serviceLog('ERROR', scanError, { directory, reason })
-    const gitError = results[1].status === 'rejected' ? `Git: ${results[1].reason.message}` : null
+    const gitError = results[0].status === 'rejected' ? `Git: ${results[0].reason.message}` : null
     if (directory === currentDirectory && generation === watchGeneration) {
-      const aheadBehind = results[2].status === 'fulfilled' ? results[2].value : { incoming: 0, outgoing: 0 }
-      const branch = results[3].status === 'fulfilled' ? results[3].value : ''
-      const gitLfs = results[4].status === 'fulfilled' ? results[4].value : false
-      const hasCommits = results[5].status === 'fulfilled' ? results[5].value : false
+      const aheadBehind = results[1].status === 'fulfilled' ? results[1].value : { incoming: 0, outgoing: 0 }
+      const branch = results[2].status === 'fulfilled' ? results[2].value : ''
+      const gitLfs = results[3].status === 'fulfilled' ? results[3].value : false
+      const hasCommits = results[4].status === 'fulfilled' ? results[4].value : false
       const project = projects.find(item => item.path === directory)
       if (project && project.gitLfs !== gitLfs) { project.gitLfs = gitLfs; persistProjects() }
-      const update = { directory, projectIcon: findProjectIcon(directory), files, changes, incomingCommits: aheadBehind.incoming, outgoingCommits: aheadBehind.outgoing, branch, gitLfs, hasCommits, gitOk: results[1].status === 'fulfilled', reason, error: [scanError, gitError].filter(Boolean).join(' | ') || null, at: new Date().toISOString() }
+      const update = { directory, projectIcon: findProjectIcon(directory), changes, incomingCommits: aheadBehind.incoming, outgoingCommits: aheadBehind.outgoing, branch, gitLfs, hasCommits, gitOk: results[0].status === 'fulfilled', indexing: getFileIndexState(directory).status, reason, error: gitError, at: new Date().toISOString() }
       sendRenderer('directory-update', update)
       return update
     }
@@ -387,7 +482,7 @@ function createWindow() {
   const display = screen.getAllDisplays().find(item => saved && item.workArea.x <= saved.x + saved.width / 2 && item.workArea.x + item.workArea.width >= saved.x + saved.width / 2 && item.workArea.y <= saved.y + saved.height / 2 && item.workArea.y + item.workArea.height >= saved.y + saved.height / 2)
   const defaults = { width: 1180, height: 760, x: 0, y: 0 }
   const bounds = saved && display ? { x: saved.x, y: saved.y, width: Math.max(900, saved.width), height: Math.max(620, saved.height) } : defaults
-  win = new BrowserWindow({ ...bounds, minWidth: 900, minHeight: 620, icon: path.join(__dirname, '../assets/pulse-git-ai.png'), backgroundColor: '#08111f', webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false } })
+  win = new BrowserWindow({ ...bounds, minWidth: 900, minHeight: 620, icon: path.join(__dirname, '../assets/pulse-git-ai.png'), backgroundColor: '#17191c', webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false } })
   if (saved?.isMaximized) win.maximize()
   win.on('resize', scheduleSaveWindowState)
   win.on('move', scheduleSaveWindowState)
@@ -401,10 +496,19 @@ async function startWatching(directory) {
   try {
     await ensureGitRepository(directory)
   } catch (error) {
-    if (isDirectoryEmpty(directory)) {
-      const emptyError = new Error('The selected directory is empty and is not a Git repository')
-      emptyError.code = 'EMPTY_DIRECTORY_NOT_REPOSITORY'
-      throw emptyError
+    // A valid directory without a .git folder is still a usable project:
+    // the renderer can offer either local initialization or a remote checkout.
+    if (fs.existsSync(directory) && fs.statSync(directory).isDirectory()) {
+      // Do not let the previous repository watcher publish a stale directory
+      // after the user has switched to this setup-only project.
+      if (watcher) { watcher.close(); watcher = null }
+      if (publishTimer) { clearTimeout(publishTimer); publishTimer = null }
+      watchGeneration += 1
+      publishQueued = false
+      currentDirectory = ''
+      const repositoryError = new Error('The selected directory is not a Git repository')
+      repositoryError.code = 'NOT_A_GIT_REPOSITORY'
+      throw repositoryError
     }
     throw error
   }
@@ -415,11 +519,14 @@ async function startWatching(directory) {
   currentDirectory = directory
   const generation = watchGeneration
   watcher = fs.watch(directory, { recursive: true }, (_, filename) => {
-    if (generation === watchGeneration) schedulePublish(filename ? String(filename) : 'change')
+    if (generation !== watchGeneration) return
+    const changedPath = filename ? String(filename).replaceAll('\\', '/') : ''
+    schedulePublish(changedPath || 'change')
   })
   watcher.on('error', error => {
     if (error?.code === 'ENOENT' || !fs.existsSync(directory)) schedulePublish('directory-removed')
   })
+  sendFileIndexUpdate(directory, getFileIndexState(directory))
   await publish('started', generation)
 }
 function openDirectory() { dialog.showOpenDialog(win, { properties: ['openDirectory'] }).then(result => { if (result.filePaths[0]) startWatching(result.filePaths[0]) }) }
@@ -428,14 +535,27 @@ function buildMenu() { Menu.setApplicationMenu(Menu.buildFromTemplate([{ label: 
 ipcMain.handle('choose-directory', async (_, initialPath) => { const fallback = projects.slice().sort((a, b) => (b.lastOpened || 0) - (a.lastOpened || 0))[0]?.path; const defaultPath = [initialPath, lastDirectoryDialogPath, currentDirectory, fallback].find(value => value && fs.existsSync(value)); const result = await dialog.showOpenDialog(win, { defaultPath, properties: ['openDirectory'] }); const selected = result.filePaths[0] || null; if (selected) { lastDirectoryDialogPath = selected; saveDialogState() } return selected })
 ipcMain.handle('choose-project-icon', async (_, projectDirectory) => { const defaultPath = projectDirectory && fs.existsSync(projectDirectory) ? projectDirectory : undefined; const result = await dialog.showOpenDialog(win, { defaultPath, properties: ['openFile'], filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'ico', 'svg'] }] }); return result.filePaths[0] ? readIconFile(result.filePaths[0]) : null })
 ipcMain.handle('get-project-icon', (_, directory) => directory ? findProjectIcon(directory) : null)
-ipcMain.handle('start-watching', async (_, directory) => { await startWatching(directory); return { ok: true } })
+ipcMain.handle('start-watching', async (_, directory) => {
+  try {
+    await startWatching(directory)
+    return { ok: true }
+  } catch (error) {
+    // Expected setup state must cross IPC as data; Electron does not preserve
+    // custom Error properties such as `code` when rejecting invoke().
+    if (error?.code === 'NOT_A_GIT_REPOSITORY' || String(error?.message || '').includes('not a Git repository')) {
+      return { ok: false, code: 'NOT_A_GIT_REPOSITORY', message: 'The selected directory is not a Git repository' }
+    }
+    throw error
+  }
+})
 ipcMain.handle('initialize-repository', async (_, directory) => { sendOperationLog(`Initializing Git repository in ${directory}`); await runGit(directory, ['init'], 30000); sendOperationLog('Git repository initialized'); await startWatching(directory); sendOperationLog('Watcher started'); return { ok: true } })
 ipcMain.handle('checkout-repository', async (_, { directory, remote }) => {
   if (!directory || !String(remote || '').trim()) throw new Error('Enter a repository URL')
   const remoteUrl = String(remote).trim()
   sendOperationLog(`Checking out ${remoteUrl} into ${directory}`)
+  const isRepository = await ensureGitRepository(directory).then(() => true).catch(() => false)
   try {
-    await ensureGitRepository(directory)
+    if (isRepository) {
     sendOperationLog('The destination is already a Git repository; reconnecting the remote')
     const existingRemote = await runGit(directory, ['remote', 'get-url', 'origin'], 30000).catch(() => '')
     if (!existingRemote) await runGit(directory, ['remote', 'add', 'origin', remoteUrl], 30000)
@@ -443,9 +563,21 @@ ipcMain.handle('checkout-repository', async (_, { directory, remote }) => {
     await runGit(directory, ['remote', 'set-head', 'origin', '-a'], 30000).catch(() => '')
     const remoteHead = await runGit(directory, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], 30000).catch(() => '')
     if (remoteHead.startsWith('origin/')) await runGit(directory, ['checkout', '-B', remoteHead.slice('origin/'.length), remoteHead], 30000)
-  } catch (existingRepositoryError) {
-    sendOperationLog('Destination is not a usable repository; running git clone')
-    await runGitStreaming(['clone', '--progress', remoteUrl, directory])
+    } else if (isDirectoryEmpty(directory)) {
+      sendOperationLog('Destination is empty; running git clone')
+      await runGitStreaming(['clone', '--progress', remoteUrl, directory])
+    } else {
+      sendOperationLog('Destination is not a repository; initializing it for remote checkout')
+      await runGit(directory, ['init'], 30000)
+      await runGit(directory, ['remote', 'add', 'origin', remoteUrl], 30000)
+      await runGitStreaming(['-C', directory, 'fetch', '--progress', 'origin'])
+      await runGit(directory, ['remote', 'set-head', 'origin', '-a'], 30000).catch(() => '')
+      const remoteHead = await runGit(directory, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], 30000).catch(() => '')
+      if (!remoteHead.startsWith('origin/')) throw new Error('The remote repository has no default branch')
+      await runGit(directory, ['checkout', '-B', remoteHead.slice('origin/'.length), remoteHead], 30000)
+    }
+  } catch (checkoutError) {
+    throw checkoutError
   }
   await startWatching(directory)
   sendOperationLog('Checkout completed and watcher started')
@@ -523,17 +655,78 @@ ipcMain.handle('apply-project-plan', async (_, changes) => {
   await publish('ai-project-plan')
   return { applied: changes.length }
 })
+ipcMain.handle('add-gitignore-entry', async (_, { kind, value } = {}) => {
+  if (!currentDirectory) throw new Error('No Git repository selected')
+  const entryKind = String(kind || '')
+  const rawValue = String(value || '').trim()
+  let pattern
+  if (entryKind === 'extension') {
+    if (!/^\.[^/\\\s]+$/.test(rawValue)) throw new Error('Invalid file extension')
+    pattern = `*${rawValue}`
+  } else {
+    const relative = rawValue.replaceAll('\\', '/').replace(/^\/+/, '')
+    if (!relative || relative === '.' || relative.split('/').some(part => !part || part === '..') || path.isAbsolute(rawValue)) throw new Error('Invalid ignore path')
+    pattern = `/${relative}${entryKind === 'folder' ? '/' : ''}`
+  }
+  const ignorePath = path.join(currentDirectory, '.gitignore')
+  const existing = fs.existsSync(ignorePath) ? fs.readFileSync(ignorePath, 'utf8') : ''
+  const lines = existing.split(/\r?\n/)
+  if (!lines.some(line => line.trim() === pattern)) {
+    const next = `${existing.trimEnd()}${existing.trimEnd() ? '\n' : ''}${pattern}\n`
+    fs.writeFileSync(ignorePath, next, 'utf8')
+  }
+  sendOperationLog(`Added ${pattern} to .gitignore`)
+  await publish('gitignore-update')
+  return { pattern, added: !lines.some(line => line.trim() === pattern) }
+})
+ipcMain.handle('add-gitignore-selection', async (_, { entries } = {}) => {
+  if (!currentDirectory) throw new Error('No Git repository selected')
+  const patterns = (Array.isArray(entries) ? entries : []).map(entry => {
+    const kind = String(entry?.kind || '')
+    const rawValue = String(entry?.value || '').trim()
+    const relative = rawValue.replaceAll('\\', '/').replace(/^\/+/, '')
+    if (!['file', 'folder'].includes(kind) || !relative || relative === '.' || path.isAbsolute(rawValue) || relative.split('/').some(part => !part || part === '..')) throw new Error('Invalid ignore selection')
+    return `/${relative}${kind === 'folder' ? '/' : ''}`
+  }).filter((pattern, index, all) => all.indexOf(pattern) === index)
+  if (!patterns.length) throw new Error('No files or folders selected')
+  const ignorePath = path.join(currentDirectory, '.gitignore')
+  const existing = fs.existsSync(ignorePath) ? fs.readFileSync(ignorePath, 'utf8') : ''
+  const lines = existing.split(/\r?\n/)
+  const additions = patterns.filter(pattern => !lines.some(line => line.trim() === pattern))
+  if (additions.length) fs.writeFileSync(ignorePath, `${existing.trimEnd()}${existing.trimEnd() ? '\n' : ''}${additions.join('\n')}\n`, 'utf8')
+  sendOperationLog(`Added ${additions.length} selected ignore rule${additions.length === 1 ? '' : 's'} to .gitignore`)
+  await publish('gitignore-update')
+  return { patterns, added: additions.length }
+})
 ipcMain.handle('generate-commit-message', async (_, { files, operation = 'commit' } = {}) => {
   if (!currentDirectory) throw new Error('No directory selected')
   if (!aiSettings?.aiEnabled) throw new Error('AI generation is disabled in Settings')
   if (!aiSettings?.endpoint || !aiSettings?.model) throw new Error('Configure the Ollama endpoint and model in Settings')
   const selected = Array.isArray(files) ? files.filter(file => typeof file === 'string' && file && !file.includes('..')) : []
   if (!selected.length) throw new Error('Select at least one file')
-  const untracked = await new Promise(resolve => execFile('git', ['-C', currentDirectory, 'ls-files', '--others', '--exclude-standard', '--', ...selected], { windowsHide: true, timeout: 30000, maxBuffer: 8 * 1024 * 1024 }, (_, stdout) => resolve(stdout.split(/\r?\n/).filter(Boolean))))
-  const fileList = await new Promise(resolve => execFile('git', ['-C', currentDirectory, 'status', '--short', '--', ...selected], { windowsHide: true, timeout: 30000, maxBuffer: 8 * 1024 * 1024 }, (_, stdout) => resolve(stdout)))
-  const diffStat = await new Promise(resolve => execFile('git', ['-C', currentDirectory, 'diff', 'HEAD', '--stat', '--', ...selected], { windowsHide: true, timeout: 30000, maxBuffer: 8 * 1024 * 1024 }, (_, stdout) => resolve(stdout)))
+  // Do not append every selected path to the command line: a full directory
+  // selection can exceed Windows' process argument limit. Read repository
+  // state once and filter it in memory instead.
+  const normalizedSelected = selected.map(file => file.replaceAll('\\', '/'))
+  const isSelectedPath = file => {
+    const normalizedFile = file.replaceAll('\\', '/')
+    return normalizedSelected.some(selection => normalizedFile === selection || normalizedFile.startsWith(`${selection}/`))
+  }
+  const workingTreeChanges = await gitChanges(currentDirectory)
+  const selectedChanges = workingTreeChanges.filter(change => isSelectedPath(change.file))
+  const untracked = selectedChanges.filter(change => change.code === '??').map(change => change.file)
+  const fileList = selectedChanges.map(change => `${change.code} ${change.file}`).join('\n')
+  const hasCommits = await gitHasCommits(currentDirectory)
+  const diffOutputs = hasCommits
+    ? [await runGit(currentDirectory, ['diff', 'HEAD', '--numstat', '-z', '--no-renames'], 30000)]
+    : await Promise.all([
+      runGit(currentDirectory, ['diff', '--cached', '--numstat', '-z', '--no-renames'], 30000),
+      runGit(currentDirectory, ['diff', '--numstat', '-z', '--no-renames'], 30000)
+    ])
+  const diffRecords = diffOutputs.flatMap(parseNumstat)
+  const diffStat = diffRecords.filter(record => isSelectedPath(record.file)).map(record => `${record.added}\t${record.deleted}\t${record.file}`).join('\n')
   if (!fileList.trim() && !untracked.length) throw new Error('No diff available for the selected files')
-  const selectedSet = new Set(selected)
+  const selectedSet = new Set(normalizedSelected)
   const prompt = operation === 'stash' ? `TASK: Write a short label for temporary, unfinished work that is being saved in a Git stash.
 MANDATORY LANGUAGE: ${aiSettings.language}. The description MUST be written entirely in ${aiSettings.language}.
 FORMAT: Natural language, optionally beginning with the lowercase prefix "wip:".
@@ -573,12 +766,12 @@ ${diffStat.slice(0, 4000)}`
       const rawArgs = call?.function?.arguments
       const args = typeof rawArgs === 'string' ? JSON.parse(rawArgs) : (rawArgs || {})
       const file = String(args.file || '')
-      if (!selectedSet.has(file) || file.includes('..') || path.isAbsolute(file)) throw new Error('AI requested a file outside the selected changes')
+      if (!selectedSet.has(file.replaceAll('\\', '/')) || file.includes('..') || path.isAbsolute(file)) throw new Error('AI requested a file outside the selected changes')
       let content = 'Unknown tool'
       if (name === 'get_file_diff') {
         content = untracked.includes(file)
           ? (() => { try { return `New file ${file}:\n${fs.readFileSync(path.resolve(currentDirectory, file), 'utf8').slice(0, 16000)}` } catch { return 'New binary or unreadable file.' } })()
-          : await new Promise(resolve => execFile('git', ['-C', currentDirectory, 'diff', 'HEAD', '--unified=2', '--', file], { windowsHide: true, timeout: 30000, maxBuffer: 8 * 1024 * 1024 }, (_, stdout) => resolve(stdout || 'No diff available for this file.')))
+          : await gitDiffForFile(currentDirectory, file, hasCommits)
       } else if (name === 'read_file') {
         try { content = fs.readFileSync(path.resolve(currentDirectory, file), 'utf8').slice(0, 12000) } catch { content = 'File is binary, unavailable or unreadable.' }
       }
@@ -724,7 +917,7 @@ ipcMain.handle('stash-selected', async (_, { files, message }) => {
   const stashMessage = String(message || '').trim()
   if (!selected.length) throw new Error('Select at least one file')
   if (!stashMessage) throw new Error('The stash message is empty')
-  const result = await new Promise((resolve, reject) => execFile('git', ['-C', currentDirectory, 'stash', 'push', '-u', '-m', stashMessage, '--', ...selected], { windowsHide: true, timeout: 60000, maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => error ? reject(new Error(stderr.trim() || stdout.trim() || error.message)) : resolve(stdout.trim())))
+  const result = await runGitWithPathspec(currentDirectory, ['stash', 'push', '-u', '-m', stashMessage], selected, 60000)
   await publish('stash-created')
   return result
 })
@@ -775,10 +968,27 @@ ipcMain.handle('commit-selected', async (_, { files, message, amend = false }) =
   const commitMessage = String(message || '').trim()
   if (!selected.length) throw new Error('Select at least one file')
   if (!commitMessage) throw new Error('The commit message is empty')
-  await new Promise((resolve, reject) => execFile('git', ['-C', currentDirectory, 'add', '--', ...selected], { windowsHide: true, timeout: 30000 }, (error, stdout, stderr) => error ? reject(new Error(stderr.trim() || error.message)) : resolve(stdout)))
+  sendOperationLog('Staging selected changes…')
+  await runGitWithPathspec(currentDirectory, ['add'], selected, 30000)
+  sendOperationLog(amend ? 'Amending commit…' : 'Creating commit…')
   const output = await new Promise((resolve, reject) => execFile('git', ['-C', currentDirectory, 'commit', ...(amend ? ['--amend'] : []), '-m', commitMessage], { windowsHide: true, timeout: 30000 }, (error, stdout, stderr) => error ? reject(new Error(stderr.trim() || error.message)) : resolve(stdout.trim())))
-  await publish('post-commit')
+  // Refreshing Git status can still be expensive in a large repository. The
+  // commit is complete, so let the renderer continue while the refresh runs.
+  void publish('post-commit')
   return { ok: true, output: String(output || '') }
+})
+ipcMain.handle('move-selected', async (_, { files } = {}) => {
+  if (!currentDirectory) throw new Error('No directory selected')
+  const selected = Array.isArray(files) ? files.filter(file => typeof file === 'string' && file && !file.includes('..')) : []
+  if (selected.length !== 2) throw new Error('Select exactly one deleted file and one added file')
+  const changes = await gitChanges(currentDirectory)
+  const selectedChanges = changes.filter(change => selected.includes(change.file))
+  if (selectedChanges.length !== 2 || !selectedChanges.some(change => change.status === 'Deleted') || !selectedChanges.some(change => change.status === 'Added')) {
+    throw new Error('Select exactly one deleted file and one added file')
+  }
+  await runGit(currentDirectory, ['add', '-A', '--', ...selected])
+  await publish('file-move')
+  return { ok: true }
 })
 ipcMain.handle('refresh', async () => publish('post-commit'))
 async function runGitRemote(command) {
