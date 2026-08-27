@@ -216,11 +216,28 @@ aside { border-color:#30343a; background:#1b1e21 }
 .settings-toggle.enabled span { transform:translateX(18px); background:#5eead4; }
 .settings-ai-fields { display:grid; gap:13px; margin-top:20px; }
 .settings-ai-fields label { display:grid; gap:6px; color:#aeb5bd; font-size:10px; font-weight:700; letter-spacing:.7px; text-transform:uppercase; }
+.settings-provider-picker { display:grid; gap:7px; }
+.settings-field-label { color:#aeb5bd; font-size:10px; font-weight:700; letter-spacing:.7px; text-transform:uppercase; }
+.settings-provider-pills { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:8px; }
+.settings-provider-pill { display:flex; align-items:center; gap:10px; min-width:0; padding:11px 10px; border:1px solid #454b51; border-radius:9px; background:#17191c; color:#aeb5bd; text-align:left; transition:border-color .16s ease, background .16s ease, color .16s ease; }
+.settings-provider-pill:hover { border-color:#617078; background:#202529; color:#edf0f2; }
+.settings-provider-pill.active { border-color:#4b716d; background:#203a38; color:#5eead4; box-shadow:inset 0 0 0 1px #315450; }
+.settings-provider-pill > span:last-child { display:grid; gap:3px; min-width:0; }
+.settings-provider-pill strong { overflow:hidden; color:inherit; font-size:11px; text-overflow:ellipsis; white-space:nowrap; }
+.settings-provider-pill small { overflow:hidden; color:#89939a; font-size:9px; font-weight:500; letter-spacing:0; text-overflow:ellipsis; text-transform:none; white-space:nowrap; }
+.settings-provider-pill.active small { color:#9dc5bf; }
+.provider-logo { width:23px; height:23px; flex:0 0 23px; box-sizing:border-box; object-fit:contain; padding:4px; border-radius:5px; background:#f4f4f0; }
+.provider-logo-ollama, .provider-logo-codex { padding:3px 5px; }
+.provider-logo-claude { padding:4px; }
 .settings-ai-fields input, .settings-ai-fields select { width:100%; box-sizing:border-box; padding:9px 10px; border:1px solid #454b51; border-radius:7px; background:#17191c; color:#edf0f2; font-size:11px; outline:none; }
 .settings-endpoint-group { display:flex; gap:8px; align-items:center; }
 .settings-endpoint-group input { flex:1; min-width:0; }
 .settings-endpoint-group button { flex:0 0 auto; min-height:38px; }
 .settings-endpoint-group .settings-connected { border-color:#4b716d; background:#203a38; color:#5eead4; }
+.settings-provider-status { display:flex; align-items:center; justify-content:space-between; gap:14px; padding:12px; border:1px solid #373b41; border-radius:8px; background:#1a1d20; }
+.settings-provider-status > div:first-child { display:grid; gap:4px; min-width:0; }
+.settings-provider-status small { color:#9aa1aa; font-size:10px; line-height:1.4; text-transform:none; letter-spacing:0; }
+.settings-provider-actions { display:flex; flex:0 0 auto; gap:7px; }
 .tree-expansion-actions { display:flex; gap:6px; align-items:center; }
 .tree-expansion-actions button { min-height:30px; padding:0 9px; font-size:10px; }
 /* Tree rows are flex, so a single indent step shifts the switch, the icon and the
@@ -263,6 +280,7 @@ aside { border-color:#30343a; background:#1b1e21 }
 .tree-head { padding-left:18px; }
 .lfs-list code { display:block; min-height:30px; padding:8px 9px; border-radius:6px; background:#17191c; color:#c5d0d5; font:11px/1.4 ui-monospace,monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 @media (max-width:760px) { .lfs-columns { grid-template-columns:1fr; } .lfs-track-form { flex-direction:column; } }
+@media (max-width:620px) { .settings-provider-pills { grid-template-columns:1fr; } .settings-provider-pill small { white-space:normal; } .settings-provider-status { align-items:stretch; flex-direction:column; } .settings-provider-actions { justify-content:flex-end; } }
 .repository-label-group > span:first-child { color:#8b929b; font-size:10px; font-weight:700; letter-spacing:1.6px; line-height:1; }
 .branch-pill { max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding:4px 9px; border:1px solid #4b555b; border-radius:999px; background:#272d31; color:#c2cbd1; font-family:ui-monospace, SFMono-Regular, Consolas, monospace; font-size:10px; line-height:1; }
 .branch-switcher { position:relative; min-width:0; }

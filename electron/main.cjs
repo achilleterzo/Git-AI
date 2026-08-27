@@ -55,11 +55,36 @@ function loadDialogState() { try { return JSON.parse(fs.readFileSync(dialogState
 function saveDialogState() { fs.mkdirSync(app.getPath('userData'), { recursive: true }); fs.writeFileSync(dialogStatePath(), JSON.stringify({ lastDirectoryDialogPath }, null, 2)) }
 function loadProjects() { try { return JSON.parse(fs.readFileSync(projectsPath(), 'utf8')).map(project => typeof project === 'string' ? { path: project, icon: findProjectIcon(project), lastOpened: 0 } : { lastOpened: 0, ...project }).filter(project => typeof project?.path === 'string' && project.path && fs.existsSync(project.path)) } catch { return [] } }
 function persistProjects() { fs.mkdirSync(app.getPath('userData'), { recursive: true }); fs.writeFileSync(projectsPath(), JSON.stringify(projects, null, 2)) }
+const AI_REASONING_LEVELS = ['instant', 'low', 'medium', 'high']
+function normalizeProviderConfig(provider, value = {}, legacy = {}) {
+  const config = { ...legacy, ...(value && typeof value === 'object' ? value : {}) }
+  const normalized = { model: String(config.model || ''), reasoning: AI_REASONING_LEVELS.includes(config.reasoning) ? config.reasoning : 'instant' }
+  if (provider === 'ollama') normalized.endpoint = String(config.endpoint || 'http://localhost:11434').replace(/\/$/, '')
+  return normalized
+}
+function normalizeAiSettings(settings = {}) {
+  const provider = ['ollama', 'codex', 'claude'].includes(settings.provider) ? settings.provider : 'ollama'
+  const savedProviders = settings.providers && typeof settings.providers === 'object' ? settings.providers : {}
+  const legacy = { model: settings.model, reasoning: settings.reasoning, endpoint: settings.endpoint }
+  return {
+    aiEnabled: settings.aiEnabled === true,
+    provider,
+    providers: {
+      ollama: normalizeProviderConfig('ollama', savedProviders.ollama, provider === 'ollama' ? legacy : {}),
+      codex: normalizeProviderConfig('codex', savedProviders.codex, provider === 'codex' ? legacy : {}),
+      claude: normalizeProviderConfig('claude', savedProviders.claude, provider === 'claude' ? legacy : {})
+    },
+    language: String(settings.language || 'English'),
+  }
+}
+function providerConfig(provider = aiProvider()) {
+  return aiSettings?.providers?.[provider] || normalizeProviderConfig(provider)
+}
 function loadSettings() {
-  try { return { aiEnabled: false, endpoint: 'http://localhost:11434', model: '', language: 'English', reasoning: 'instant', ...JSON.parse(fs.readFileSync(settingsPath(), 'utf8')) } } catch { return { aiEnabled: false, endpoint: 'http://localhost:11434', model: '', language: 'English', reasoning: 'instant' } }
+  try { return normalizeAiSettings(JSON.parse(fs.readFileSync(settingsPath(), 'utf8'))) } catch { return normalizeAiSettings() }
 }
 function saveSettings(settings) {
-  aiSettings = { aiEnabled: settings.aiEnabled === true, endpoint: String(settings.endpoint || '').replace(/\/$/, ''), model: String(settings.model || ''), language: String(settings.language || 'English'), reasoning: ['instant', 'low', 'medium', 'high'].includes(settings.reasoning) ? settings.reasoning : 'instant' }
+  aiSettings = normalizeAiSettings(settings)
   fs.mkdirSync(app.getPath('userData'), { recursive: true })
   fs.writeFileSync(settingsPath(), JSON.stringify(aiSettings, null, 2))
   return aiSettings
@@ -77,20 +102,207 @@ function terminalShell() {
   return { file, args: ['-il'] }
 }
 function thinkingPayload() {
-  const reasoning = aiSettings?.reasoning || 'instant'
+  const reasoning = providerConfig('ollama').reasoning
   return reasoning === 'instant' ? { think: false } : { think: reasoning }
 }
 async function requestChatWithThinking(endpoint, body) {
   try { return await requestJson(`${endpoint}/api/chat`, { method: 'POST' }, { ...body, ...thinkingPayload() }) } catch (error) {
-    if ((aiSettings?.reasoning || 'instant') === 'instant') throw error
+    if (providerConfig('ollama').reasoning === 'instant') throw error
     return requestJson(`${endpoint}/api/chat`, { method: 'POST' }, { ...body, think: true })
   }
 }
 async function requestGenerateWithThinking(endpoint, body) {
   try { return await requestJson(`${endpoint}/api/generate`, { method: 'POST' }, { ...body, ...thinkingPayload() }) } catch (error) {
-    if ((aiSettings?.reasoning || 'instant') === 'instant') throw error
+    if (providerConfig('ollama').reasoning === 'instant') throw error
     return requestJson(`${endpoint}/api/generate`, { method: 'POST' }, { ...body, think: true })
   }
+}
+const AI_PROVIDER_LABELS = { ollama: 'Ollama', codex: 'Codex', claude: 'Claude' }
+const AI_CLI_TIMEOUT_MS = 180000
+
+function aiProvider() { return ['ollama', 'codex', 'claude'].includes(aiSettings?.provider) ? aiSettings.provider : 'ollama' }
+function assertAiConfigured() {
+  if (!aiSettings?.aiEnabled) throw new Error('AI generation is disabled in Settings')
+  if (aiProvider() === 'ollama' && (!providerConfig('ollama').endpoint || !providerConfig('ollama').model)) throw new Error('Configure the Ollama endpoint and model in Settings')
+}
+function cliCommand(provider) { return provider === 'codex' ? 'codex' : 'claude' }
+function quotePowerShellArg(value) { return `'${String(value).replaceAll("'", "''")}'` }
+function cliInvocation(provider, args) {
+  const command = cliCommand(provider)
+  if (process.platform === 'win32') return { command: 'powershell.exe', args: ['-NoProfile', '-NonInteractive', '-Command', [`& ${quotePowerShellArg(command)}`, ...args.map(quotePowerShellArg)].join(' ')] }
+  return { command, args, shell: true }
+}
+function cliEnvironment(provider) {
+  const environment = { ...process.env }
+  // Keep this flow OAuth-only: an API key in the parent environment must not
+  // silently change the authentication mode selected in Pulse.
+  if (provider === 'codex') delete environment.OPENAI_API_KEY
+  if (provider === 'claude') {
+    delete environment.ANTHROPIC_API_KEY
+    delete environment.ANTHROPIC_AUTH_TOKEN
+  }
+  return environment
+}
+function runCli(command, args, { cwd = currentDirectory, input = '', timeout = AI_CLI_TIMEOUT_MS, provider } = {}) {
+  return new Promise((resolve, reject) => {
+    const invocation = cliInvocation(provider, args)
+    const child = spawn(invocation.command, invocation.args, { cwd: cwd || undefined, env: cliEnvironment(provider), windowsHide: true, shell: invocation.shell, stdio: ['pipe', 'pipe', 'pipe'] })
+    let stdout = ''
+    let stderr = ''
+    let settled = false
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      try { child.kill() } catch {}
+      reject(new Error(`${AI_PROVIDER_LABELS[provider] || 'AI'} request timed out after ${Math.round(timeout / 1000)} seconds`))
+    }, timeout)
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
+    child.stdout.on('data', chunk => { stdout += chunk })
+    child.stderr.on('data', chunk => { stderr += chunk })
+    child.once('error', error => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      if (error.code === 'ENOENT') return reject(new Error(`${AI_PROVIDER_LABELS[provider] || command} client not found. Install it and try again.`))
+      reject(error)
+    })
+    child.once('close', code => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      if (code !== 0) return reject(new Error(stderr.trim() || `${AI_PROVIDER_LABELS[provider] || command} exited with code ${code}`))
+      resolve(stdout)
+    })
+    child.stdin.end(input)
+  })
+}
+function runCliStatus(command, args, provider) {
+  return new Promise(resolve => {
+    const invocation = cliInvocation(provider, args)
+    execFile(invocation.command, invocation.args, { env: cliEnvironment(provider), windowsHide: true, shell: invocation.shell, timeout: 30000, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
+      const output = String(stdout || stderr || error?.message || '').trim()
+      resolve({ ok: !error, missing: error?.code === 'ENOENT' || error?.code === 9009 || /not recognized|not found/i.test(output), output })
+    })
+  })
+}
+function serializeAiMessages(messages) {
+  return (Array.isArray(messages) ? messages : []).map(message => {
+    const role = String(message?.role || 'user').toUpperCase()
+    const content = typeof message?.content === 'string' ? message.content : JSON.stringify(message?.content || '')
+    return `${role}:\n${content}`
+  }).join('\n\n')
+}
+function extractCliText(raw) {
+  const text = String(raw || '').trim()
+  const candidates = []
+  for (const line of text.split(/\r?\n/).map(value => value.trim()).filter(Boolean)) {
+    try {
+      const value = JSON.parse(line)
+      if (typeof value.result === 'string') candidates.push(value.result)
+      if (typeof value.output === 'string') candidates.push(value.output)
+      if (typeof value.item?.text === 'string') candidates.push(value.item.text)
+      if (typeof value.item?.content === 'string') candidates.push(value.item.content)
+      if (typeof value.message?.content === 'string') candidates.push(value.message.content)
+      if (typeof value.content === 'string') candidates.push(value.content)
+    } catch {}
+  }
+  return String(candidates.at(-1) || text).trim()
+}
+async function requestCliPrompt(provider, prompt) {
+  const command = cliCommand(provider)
+  const rawModel = String(providerConfig(provider).model || '').trim()
+  const model = /^[A-Za-z0-9._:/-]+$/.test(rawModel) ? rawModel : ''
+  if (provider === 'codex') {
+    const args = ['exec', '--json', '--sandbox', 'read-only', ...(model ? ['--model', model] : []), '-']
+    return extractCliText(await runCli(command, args, { provider, input: `${prompt}\n\nReturn only the final answer. Do not modify files, commit changes, or alter the repository.` }))
+  }
+  const args = ['-p', '--output-format', 'json', '--permission-mode', 'plan', '--tools', 'Read', ...(model ? ['--model', model] : [])]
+  return extractCliText(await runCli(command, args, { provider, input: `Read the instruction supplied on stdin and return only the final answer.\n\n${prompt}\n\nReturn only the final answer. Do not modify files, commit changes, or alter the repository.` }))
+}
+async function requestAiChat(body) {
+  const provider = aiProvider()
+  if (provider === 'ollama') return requestChatWithThinking(providerConfig('ollama').endpoint, body)
+  const prompt = serializeAiMessages(body.messages)
+  sendRenderer('ai-prompt-log', { at: new Date().toISOString(), provider, mode: 'cli', prompt })
+  return { message: { role: 'assistant', content: await requestCliPrompt(provider, prompt) } }
+}
+async function requestAiGenerate(body) {
+  const provider = aiProvider()
+  if (provider === 'ollama') return requestGenerateWithThinking(providerConfig('ollama').endpoint, body)
+  const prompt = String(body.prompt || '')
+  sendRenderer('ai-prompt-log', { at: new Date().toISOString(), provider, mode: 'cli', prompt })
+  return { response: await requestCliPrompt(provider, prompt) }
+}
+async function getAiProviderStatus(provider = aiProvider()) {
+  const selected = ['codex', 'claude'].includes(provider) ? provider : 'ollama'
+  if (selected === 'ollama') return { provider: selected, label: AI_PROVIDER_LABELS[selected], installed: true, authenticated: false, configured: Boolean(providerConfig('ollama').endpoint && providerConfig('ollama').model) }
+  const command = cliCommand(selected)
+  const status = await runCliStatus(command, selected === 'codex' ? ['login', 'status'] : ['auth', 'status'], selected)
+  return { provider: selected, label: AI_PROVIDER_LABELS[selected], command, installed: !status.missing, authenticated: status.ok, configured: status.ok }
+}
+async function loginAiProvider(provider = aiProvider()) {
+  const selected = ['codex', 'claude'].includes(provider) ? provider : ''
+  if (!selected) throw new Error('Select Codex or Claude to start OAuth login')
+  const command = cliCommand(selected)
+  const availability = await runCliStatus(command, ['--version'], selected)
+  if (availability.missing) throw new Error(`${AI_PROVIDER_LABELS[selected]} client not found. Install it and try again.`)
+  const args = selected === 'codex' ? ['login'] : ['auth', 'login']
+  const invocation = cliInvocation(selected, args)
+  const child = spawn(invocation.command, invocation.args, { cwd: currentDirectory || undefined, env: cliEnvironment(selected), detached: true, windowsHide: false, shell: invocation.shell, stdio: 'ignore' })
+  child.once('error', error => serviceLog('ERROR', `[${AI_PROVIDER_LABELS[selected]}] login process failed`, error))
+  child.unref()
+  return { started: true, provider: selected }
+}
+const CLAUDE_MODEL_ALIASES = ['default', 'best', 'sonnet', 'opus', 'haiku', 'sonnet[1m]', 'opus[1m]', 'opusplan']
+function requestCodexModels() {
+  return new Promise((resolve, reject) => {
+    const invocation = cliInvocation('codex', ['app-server'])
+    const child = spawn(invocation.command, invocation.args, { cwd: currentDirectory || undefined, env: cliEnvironment('codex'), windowsHide: true, shell: invocation.shell, stdio: ['pipe', 'pipe', 'pipe'] })
+    let buffer = ''
+    let stderr = ''
+    let settled = false
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      try { child.kill() } catch {}
+      reject(new Error('Codex model discovery timed out'))
+    }, 30000)
+    const finish = (error, value) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      try { child.kill() } catch {}
+      error ? reject(error) : resolve(value)
+    }
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
+    child.stderr.on('data', chunk => { stderr += chunk })
+    child.stdout.on('data', chunk => {
+      buffer += chunk
+      const lines = buffer.split(/\r?\n/)
+      buffer = lines.pop() || ''
+      for (const line of lines) {
+        if (!line.trim()) continue
+        let message
+        try { message = JSON.parse(line) } catch { continue }
+        if (message.id === 1 && message.error) return finish(new Error(message.error.message || 'Codex initialization failed'))
+        if (message.id === 2 && message.error) return finish(new Error(message.error.message || 'Codex model discovery failed'))
+        if (message.id === 1) {
+          child.stdin.write(`${JSON.stringify({ method: 'initialized', params: {} })}\n`)
+          child.stdin.write(`${JSON.stringify({ method: 'model/list', id: 2, params: { limit: 100, includeHidden: false } })}\n`)
+        }
+        if (message.id === 2) {
+          const models = Array.isArray(message.result?.data) ? message.result.data : []
+          const values = models.filter(model => typeof model?.model === 'string' && model.model).sort((left, right) => Number(Boolean(right.isDefault)) - Number(Boolean(left.isDefault))).map(model => model.model)
+          finish(null, values)
+        }
+      }
+    })
+    child.once('error', error => finish(error.code === 'ENOENT' ? new Error('Codex client not found. Make sure the `codex` command is available in the app PATH.') : error))
+    child.once('close', code => { if (!settled && code !== 0) finish(new Error(stderr.trim() || `Codex model discovery failed with exit code ${code}`)) })
+    child.stdin.write(`${JSON.stringify({ method: 'initialize', id: 1, params: { clientInfo: { name: 'pulse_git_ai', title: 'Pulse Git AI', version: app.getVersion() } } })}\n`)
+  })
 }
 function requestJson(urlString, options = {}, body = null) {
   return new Promise((resolve, reject) => {
@@ -493,29 +705,25 @@ function createWindow() {
   for (const entry of pendingOperationLogs.splice(0)) win.webContents.send('operation-log', entry)
 }
 async function startWatching(directory) {
+  // Invalidate the previous watcher before validating the new target. Its
+  // in-flight publish must not be able to restore the old project in the UI.
+  if (watcher) { watcher.close(); watcher = null }
+  if (publishTimer) { clearTimeout(publishTimer); publishTimer = null }
+  watchGeneration += 1
+  publishQueued = false
+  currentDirectory = ''
   try {
     await ensureGitRepository(directory)
   } catch (error) {
     // A valid directory without a .git folder is still a usable project:
     // the renderer can offer either local initialization or a remote checkout.
     if (fs.existsSync(directory) && fs.statSync(directory).isDirectory()) {
-      // Do not let the previous repository watcher publish a stale directory
-      // after the user has switched to this setup-only project.
-      if (watcher) { watcher.close(); watcher = null }
-      if (publishTimer) { clearTimeout(publishTimer); publishTimer = null }
-      watchGeneration += 1
-      publishQueued = false
-      currentDirectory = ''
       const repositoryError = new Error('The selected directory is not a Git repository')
       repositoryError.code = 'NOT_A_GIT_REPOSITORY'
       throw repositoryError
     }
     throw error
   }
-  if (watcher) watcher.close()
-  if (publishTimer) { clearTimeout(publishTimer); publishTimer = null }
-  watchGeneration += 1
-  publishQueued = false
   currentDirectory = directory
   const generation = watchGeneration
   watcher = fs.watch(directory, { recursive: true }, (_, filename) => {
@@ -585,12 +793,22 @@ ipcMain.handle('checkout-repository', async (_, { directory, remote }) => {
 })
 ipcMain.handle('git-changes', () => currentDirectory ? gitChanges(currentDirectory) : [])
 ipcMain.handle('get-settings', () => aiSettings)
+ipcMain.handle('get-ai-status', async (_, provider) => getAiProviderStatus(provider || aiProvider()))
+ipcMain.handle('login-ai-provider', async (_, provider) => loginAiProvider(provider || aiProvider()))
 ipcMain.handle('get-app-version', () => app.getVersion())
 ipcMain.handle('open-devtools', () => { if (!app.isPackaged && win && !win.isDestroyed()) win.webContents.openDevTools({ mode: 'detach' }); return !app.isPackaged })
 ipcMain.handle('get-latest-release', async () => { try { return await fetchLatestRelease() } catch (error) { serviceLog('ERROR', '[Update] release check failed', error); throw error } })
 ipcMain.handle('open-release', (_, url) => { if (typeof url === 'string' && /^https:\/\/github\.com\//.test(url)) return shell.openExternal(url); return false })
 ipcMain.handle('save-settings', (_, settings) => saveSettings(settings))
-ipcMain.handle('fetch-models', async (_, endpoint) => { const data = await requestJson(`${String(endpoint).replace(/\/$/, '')}/api/tags`); return (data.models || []).map(model => model.name).filter(Boolean) })
+ipcMain.handle('fetch-models', async (_, request = {}) => {
+  const provider = typeof request === 'string' ? 'ollama' : (request.provider || aiProvider())
+  if (provider === 'claude') return CLAUDE_MODEL_ALIASES
+  if (provider === 'codex') return requestCodexModels()
+  const endpoint = typeof request === 'string' ? request : request.endpoint
+  if (!endpoint) throw new Error('Configure the Ollama endpoint in Settings')
+  const data = await requestJson(`${String(endpoint).replace(/\/$/, '')}/api/tags`)
+  return (data.models || []).map(model => model.name).filter(Boolean)
+})
 ipcMain.handle('get-project-assistant-context', async () => {
   if (!currentDirectory) throw new Error('No directory selected')
   const files = (await runGit(currentDirectory, ['ls-files', '--cached', '--others', '--exclude-standard'])).split(/\r?\n/).filter(Boolean).slice(0, 1200)
@@ -599,7 +817,7 @@ ipcMain.handle('get-project-assistant-context', async () => {
 })
 ipcMain.handle('generate-project-plan', async (_, instruction) => {
   if (!currentDirectory) throw new Error('No directory selected')
-  if (!aiSettings?.aiEnabled || !aiSettings?.endpoint || !aiSettings?.model) throw new Error('Configure and enable AI in Settings')
+  assertAiConfigured()
   const root = path.basename(currentDirectory)
   const prompt = `You are a .gitignore assistant. The project root is named "${root}". Investigate the project yourself using the available tools. Infer the project type only from evidence in the project. Your ONLY task is to propose file and directory patterns that should be added to the root .gitignore. Do not propose README files, source changes, folder moves, deletions, or any file other than .gitignore. Return ONLY valid JSON with this shape: {"summary":"...","entries":[{"pattern":"pattern","reason":"why it should be ignored"}]}. Do not include patterns that would hide source files or user-authored project files.\n\nUSER INSTRUCTIONS:\n${String(instruction || '').trim()}`
   const tools = [
@@ -609,7 +827,7 @@ ipcMain.handle('generate-project-plan', async (_, instruction) => {
   const messages = [{ role: 'user', content: prompt }]
   let raw = ''
   for (let attempt = 0; attempt < 12; attempt += 1) {
-    const result = await requestChatWithThinking(aiSettings.endpoint, { model: aiSettings.model, messages, tools, stream: false })
+    const result = await requestAiChat({ model: providerConfig().model, messages, tools, stream: false })
     const assistant = result.message || {}
     messages.push(assistant)
     const calls = Array.isArray(assistant.tool_calls) ? assistant.tool_calls : []
@@ -700,8 +918,7 @@ ipcMain.handle('add-gitignore-selection', async (_, { entries } = {}) => {
 })
 ipcMain.handle('generate-commit-message', async (_, { files, operation = 'commit' } = {}) => {
   if (!currentDirectory) throw new Error('No directory selected')
-  if (!aiSettings?.aiEnabled) throw new Error('AI generation is disabled in Settings')
-  if (!aiSettings?.endpoint || !aiSettings?.model) throw new Error('Configure the Ollama endpoint and model in Settings')
+  assertAiConfigured()
   const selected = Array.isArray(files) ? files.filter(file => typeof file === 'string' && file && !file.includes('..')) : []
   if (!selected.length) throw new Error('Select at least one file')
   // Do not append every selected path to the command line: a full directory
@@ -756,7 +973,7 @@ ${diffStat.slice(0, 4000)}`
   const messages = [{ role: 'user', content: prompt }]
   let finalContent = ''
   for (let attempt = 0; attempt < 16; attempt += 1) {
-    const result = await requestChatWithThinking(aiSettings.endpoint, { model: aiSettings.model, messages, tools, stream: false })
+    const result = await requestAiChat({ model: providerConfig().model, messages, tools, stream: false })
     const assistant = result.message || {}
     messages.push(assistant)
     const calls = Array.isArray(assistant.tool_calls) ? assistant.tool_calls : []
@@ -779,7 +996,7 @@ ${diffStat.slice(0, 4000)}`
     }
   }
   const message = finalContent.split(/\r?\n/)[0].replace(/^['"`]+|['"`]+$/g, '').trim()
-  if (!message) throw new Error('Ollama returned an empty commit message. Check the selected model and try again.')
+  if (!message) throw new Error(`${AI_PROVIDER_LABELS[aiProvider()]} returned an empty commit message. Check the provider configuration and try again.`)
   return message
 })
 ipcMain.handle('get-diff', async (_, file) => {
@@ -824,8 +1041,7 @@ ipcMain.handle('amend-commit-message', async (_, message) => {
 })
 ipcMain.handle('generate-release-tag', async () => {
   if (!currentDirectory) throw new Error('No directory selected')
-  if (!aiSettings?.aiEnabled) throw new Error('AI generation is disabled in Settings')
-  if (!aiSettings?.endpoint || !aiSettings?.model) throw new Error('Configure the Ollama endpoint and model in Settings')
+  assertAiConfigured()
   const base = await runGit(currentDirectory, ['describe', '--tags', '--abbrev=0']).catch(() => '')
   const range = base ? `${base}..HEAD` : 'HEAD'
   const changes = await runGit(currentDirectory, ['log', range, '--format=%s%n%b']).catch(() => '')
@@ -853,7 +1069,7 @@ ${fileSummary.slice(0, 6000)}`
   const messages = [{ role: 'user', content: prompt }]
   let finalContent = ''
   for (let attempt = 0; attempt < 16; attempt += 1) {
-    const result = await requestChatWithThinking(aiSettings.endpoint, { model: aiSettings.model, messages, tools, stream: false })
+    const result = await requestAiChat({ model: providerConfig().model, messages, tools, stream: false })
     const assistant = result.message || {}
     messages.push(assistant)
     const calls = Array.isArray(assistant.tool_calls) ? assistant.tool_calls : []
@@ -873,7 +1089,7 @@ ${fileSummary.slice(0, 6000)}`
     }
   }
   if (!finalContent) {
-    const finalResult = await requestChatWithThinking(aiSettings.endpoint, { model: aiSettings.model, messages: [...messages, { role: 'user', content: 'Stop inspecting files now. Return ONLY the final valid JSON object with exactly the fields name and message. Do not call tools and do not include any explanation.' }], stream: false })
+    const finalResult = await requestAiChat({ model: providerConfig().model, messages: [...messages, { role: 'user', content: 'Stop inspecting files now. Return ONLY the final valid JSON object with exactly the fields name and message. Do not call tools and do not include any explanation.' }], stream: false })
     finalContent = String(finalResult.message?.content || '').trim()
   }
   const cleaned = finalContent.replace(/^```(?:json)?\s*|\s*```$/gi, '').trim()
@@ -883,7 +1099,7 @@ ${fileSummary.slice(0, 6000)}`
     const parsed = JSON.parse(raw)
     if (!/^v\d+\.\d+\.\d+$/.test(parsed.name) || !String(parsed.message || '').trim()) throw new Error()
     return { name: parsed.name, message: String(parsed.message).trim(), base, hasChanges: Boolean(changes.trim()) }
-  } catch { throw new Error('Ollama returned an invalid release tag proposal') }
+  } catch { throw new Error(`${AI_PROVIDER_LABELS[aiProvider()]} returned an invalid release tag proposal`) }
 })
 ipcMain.handle('create-tag', async (_, { name, commit, message, annotated = true } = {}) => {
   if (!currentDirectory) throw new Error('No directory selected')
@@ -1070,7 +1286,7 @@ ipcMain.handle('unstash-many', async (_, refs) => {
 })
 ipcMain.handle('generate-stash-merge-message', async (_, refs) => {
   if (!currentDirectory) throw new Error('No directory selected')
-  if (!aiSettings?.endpoint || !aiSettings?.model) throw new Error('Configure the Ollama endpoint and model in Settings')
+  assertAiConfigured()
   const selected = Array.isArray(refs) ? refs.filter(ref => typeof ref === 'string') : []
   const list = await runGit(currentDirectory, ['stash', 'list', '--format=%gd|%s'])
   const messages = list.split(/\r?\n/).filter(Boolean).filter(line => selected.includes(line.split('|')[0])).map(line => line.split('|').slice(1).join('|'))
@@ -1081,9 +1297,9 @@ OUTPUT RULES: Return one line only. No markdown, quotes, explanation, prefix or 
 
 STASH MESSAGES:
 ${messages.join('\n')}`
-  const result = await requestGenerateWithThinking(aiSettings.endpoint, { model: aiSettings.model, prompt, stream: false })
+  const result = await requestAiGenerate({ model: providerConfig().model, prompt, stream: false })
   const message = String(result.response || '').trim().split(/\r?\n/)[0].replace(/^['"`]+|['"`]+$/g, '').trim()
-  if (!message) throw new Error('Ollama returned an empty stash merge message.')
+  if (!message) throw new Error(`${AI_PROVIDER_LABELS[aiProvider()]} returned an empty stash merge message.`)
   return message
 })
 ipcMain.handle('merge-stashes', async (_, { refs, message } = {}) => {
