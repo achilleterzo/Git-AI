@@ -980,7 +980,15 @@ ipcMain.handle('generate-commit-message', async (_, { files, operation = 'commit
   const diffStat = diffRecords.filter(record => isSelectedPath(record.file)).map(record => `${record.added}\t${record.deleted}\t${record.file}`).join('\n')
   if (!fileList.trim() && !untracked.length) throw new Error('No diff available for the selected files')
   const selectedSet = new Set(normalizedSelected)
-  const prompt = operation === 'stash' ? `TASK: Write a short label for temporary, unfinished work that is being saved in a Git stash.
+  const prompt = operation === 'planned-commits' ? `TASK: Plan several small, coherent Git commits for the selected changes.
+MANDATORY LANGUAGE: ${aiSettings.language}. Every message MUST be written entirely in ${aiSettings.language}.
+OUTPUT: Return ONLY valid JSON, exactly {"commits":[{"files":["path"],"message":"type(scope): description"}]}.
+Every selected file must appear exactly once, and every commit must contain at least one file. Use Conventional Commits messages. Do not include the plan, reasoning, markdown or extra fields in messages.
+SELECTED FILES AND STATUS:
+${fileList.slice(0, 8000)}
+
+DIFF STAT:
+${diffStat.slice(0, 4000)}` : operation === 'stash' ? `TASK: Write a short label for temporary, unfinished work that is being saved in a Git stash.
 MANDATORY LANGUAGE: ${aiSettings.language}. The description MUST be written entirely in ${aiSettings.language}.
 FORMAT: Natural language, optionally beginning with the lowercase prefix "wip:".
 OUTPUT RULES: Return one line only. This is a stash label, not a commit message: do not use Conventional Commits syntax, type/scope prefixes, uppercase labels, release language, imperative commit wording, markdown, quotes or explanation. Emphasize that the work is temporary or unfinished and summarize the complete selected change set.
@@ -1030,6 +1038,22 @@ ${diffStat.slice(0, 4000)}`
       }
       messages.push({ role: 'tool', tool_name: name, content: String(content).slice(0, 16000) })
     }
+  }
+  if (operation === 'planned-commits') {
+    try {
+      const plan = JSON.parse(finalContent.replace(/^```json\s*|\s*```$/g, '').trim())
+      if (!Array.isArray(plan.commits) || !plan.commits.length) throw new Error('The AI returned no planned commits')
+      const allowed = new Set(normalizedSelected)
+      const used = new Set()
+      plan.commits = plan.commits.map(commit => {
+        const commitFiles = Array.isArray(commit.files) ? commit.files.map(file => String(file).replaceAll('\\', '/')) : []
+        if (!commitFiles.length || !String(commit.message || '').trim()) throw new Error('Each planned commit needs files and a message')
+        commitFiles.forEach(file => { if (!allowed.has(file) || used.has(file)) throw new Error(`Invalid or duplicated planned file: ${file}`); used.add(file) })
+        return { files: commitFiles, message: String(commit.message).trim() }
+      })
+      if (used.size !== allowed.size) throw new Error('The plan does not cover every selected file')
+      return plan
+    } catch (error) { throw new Error(`Invalid planned commits response: ${error.message}`) }
   }
   const message = finalContent.split(/\r?\n/)[0].replace(/^['"`]+|['"`]+$/g, '').trim()
   if (!message) throw new Error(`${AI_PROVIDER_LABELS[aiProvider()]} returned an empty commit message. Check the provider configuration and try again.`)
@@ -1207,6 +1231,7 @@ ipcMain.handle('start-terminal', async (_, directory) => {
     cwd: directory,
     env: { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' },
     useConpty: true,
+    useConptyDll: process.platform === 'win32',
   })
   terminalProcess = processRef
   processRef.onData(data => { if (terminalSession === sessionId && terminalProcess === processRef && win && !win.isDestroyed()) win.webContents.send('terminal-data', data) })
@@ -1230,6 +1255,32 @@ ipcMain.handle('commit-selected', async (_, { files, message, amend = false }) =
   // commit is complete, so let the renderer continue while the refresh runs.
   void publish('post-commit')
   return { ok: true, output: String(output || '') }
+})
+ipcMain.handle('commit-planned', async (_, plan) => {
+  if (!currentDirectory || !Array.isArray(plan?.commits) || !plan.commits.length) throw new Error('Invalid planned commits')
+  const available = new Set((await gitChanges(currentDirectory)).map(change => change.file.replaceAll('\\', '/')))
+  const used = new Set()
+  const committed = []
+  try {
+    for (const item of plan.commits) {
+      const files = Array.isArray(item.files) ? item.files.map(file => String(file).replaceAll('\\', '/')) : []
+      const message = String(item.message || '').trim()
+      if (!files.length || !message) throw new Error('Each planned commit needs files and a message')
+      if (files.some(file => !file || path.isAbsolute(file) || file.split('/').some(part => part === '..') || !available.has(file) || used.has(file))) throw new Error('Planned commits contain an invalid or duplicated file')
+      files.forEach(file => used.add(file))
+      sendOperationLog(`Creating planned commit: ${message}`)
+      // -A records deletions as well as additions. --only keeps files already
+      // staged for another planned commit out of the current commit.
+      await runGitWithPathspec(currentDirectory, ['add', '-A'], files, 30000)
+      await runGitWithPathspec(currentDirectory, ['commit', '--only', '-m', message], files, 30000)
+      committed.push({ files, message })
+    }
+  } catch (error) {
+    await publish('post-commit').catch(() => {})
+    return { ok: false, commits: committed, error: error.message }
+  }
+  void publish('post-commit')
+  return { ok: true, commits: committed }
 })
 ipcMain.handle('move-selected', async (_, { files } = {}) => {
   if (!currentDirectory) throw new Error('No directory selected')

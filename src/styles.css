@@ -186,6 +186,26 @@ aside { border-color:#30343a; background:#1b1e21 }
 .history-list { display:flex; flex-direction:column; gap:9px; }
 .history-card { padding:14px 16px; border:1px solid #373b41; border-radius:10px; background:#202326; cursor:pointer; }
 .history-card:hover, .history-card.selected { border-color:#5eead4; background:#273333; }
+.planned-commits-modal { display:flex; flex-direction:column; width:min(720px, calc(100vw - 40px)); height:min(780px, calc(100vh - 40px)); max-height:calc(100vh - 40px); overflow:hidden; }
+.planned-commits-list { min-height:0; margin-top:16px; padding-right:4px; overflow-x:hidden; overflow-y:auto; overscroll-behavior:contain; }
+.planned-commit-card { flex:0 0 auto; min-width:0; padding:0; overflow:hidden; cursor:default; }
+.planned-commit-card.expanded { border-color:#5eead4; background:#202326; }
+.planned-commit-summary { display:flex; align-items:center; justify-content:space-between; gap:18px; width:100%; padding:14px 16px; border:0; background:transparent; color:inherit; text-align:left; }
+.planned-commit-summary:hover { background:#293436; }
+.planned-commit-title { display:flex; align-items:center; gap:12px; min-width:0; }
+.planned-commit-title code { flex:0 0 auto; color:#5eead4; font:11px ui-monospace,monospace; }
+.planned-commit-title strong { overflow:hidden; color:#e5e7eb; font-size:13px; font-weight:600; text-overflow:ellipsis; white-space:nowrap; }
+.planned-commit-count { flex:0 0 auto; color:#89939a; font-size:11px; white-space:nowrap; }
+.planned-commit-details { min-width:0; padding:0 16px 16px; border-top:1px solid #3c4749; background:#202326; color:#e5e7eb; }
+.planned-commit-details label { margin-top:14px; }
+.planned-commit-details .compact-files-panel { margin-top:14px; }
+.planned-commits-modal > .modal-actions { flex:0 0 auto; }
+.planned-commit-details .file-changes-panel { width:100%; max-width:100%; min-width:0; background:#202326; }
+.planned-commit-details .tree-row,
+.planned-commit-details .tree-head { min-width:0; }
+.read-only-files-panel .selection-switch { display:none; }
+.read-only-files-panel .panel-actions { display:none; }
+.read-only-files-panel .head-selection { padding-left:0; }
 .history-card-main { min-width:0; }
 .history-commit-meta { display:flex; flex-wrap:wrap; align-items:center; gap:10px; color:#89939a; font-size:10px; }
 .history-commit-meta code { color:#5eead4; font:11px ui-monospace,monospace; }

@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('directoryAPI', {
   addGitignoreEntry: (kind, value) => ipcRenderer.invoke('add-gitignore-entry', { kind: String(kind || ''), value: String(value || '') }),
   addGitignoreSelection: (entries) => ipcRenderer.invoke('add-gitignore-selection', { entries: Array.isArray(entries) ? entries : [] }),
   generateCommitMessage: (files, operation = 'commit') => ipcRenderer.invoke('generate-commit-message', { files: Array.isArray(files) ? files.map(file => String(file)) : [], operation: String(operation || 'commit') }),
+  commitPlanned: (commits) => ipcRenderer.invoke('commit-planned', commits),
   getDiff: (file) => ipcRenderer.invoke('get-diff', file),
   getStashes: () => ipcRenderer.invoke('get-stashes'),
   getHistory: () => ipcRenderer.invoke('get-history'),
