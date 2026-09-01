@@ -328,7 +328,7 @@ function App() {
                             <code>{String(index + 1).padStart(2, '0')}</code>
                             <strong>{commit.message}</strong>
                           </span>
-                          <span className="planned-commit-count">{commit.files.length} file{commit.files.length === 1 ? '' : 's'} <span aria-hidden="true">{isExpanded ? '⌃' : '⌄'}</span></span>
+                          <span className="planned-commit-count">{commit.files.length} file{commit.files.length === 1 ? '' : 's'}<svg className="planned-commit-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d={isExpanded ? 'm18 15-6-6-6 6' : 'm6 9 6 6 6-6'} /></svg></span>
                         </button>
                         {isExpanded && (
                           <div className="planned-commit-details">

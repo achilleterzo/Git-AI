@@ -218,7 +218,8 @@ aside { border-color:#30343a; background:#1b1e21 }
 .planned-commit-title { display:flex; align-items:center; gap:12px; min-width:0; }
 .planned-commit-title code { flex:0 0 auto; color:#5eead4; font:11px ui-monospace,monospace; }
 .planned-commit-title strong { overflow:hidden; color:#e5e7eb; font-size:13px; font-weight:600; text-overflow:ellipsis; white-space:nowrap; }
-.planned-commit-count { flex:0 0 auto; color:#89939a; font-size:11px; white-space:nowrap; }
+.planned-commit-count { display:inline-flex; flex:0 0 auto; align-items:center; gap:8px; color:#89939a; font-size:11px; white-space:nowrap; }
+.planned-commit-chevron { width:15px; height:15px; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
 .planned-commit-details { min-width:0; padding:0 16px 16px; border-top:1px solid #3c4749; background:#202326; color:#e5e7eb; }
 .planned-commit-details label { margin-top:14px; }
 .planned-commit-details .compact-files-panel { margin-top:14px; }
