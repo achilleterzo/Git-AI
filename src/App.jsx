@@ -7,6 +7,7 @@ import WatchingPill from './components/WatchingPill'
 import LfsPill from './components/LfsPill'
 import LfsPage from './pages/LfsPage'
 import HistoryPage from './pages/HistoryPage'
+import BranchesPage from './pages/BranchesPage'
 import HomePage from './pages/HomePage'
 import TerminalConsole from './components/TerminalConsole'
 import FilesTable from './components/FilesTable'
@@ -187,6 +188,7 @@ function App() {
   async function generateCommitMessage(operation = 'commit') { setPendingOperation(operation); setAiBusy(true); setAiError(''); try { const result = await runOperation(operation === 'planned-commits' ? 'Planning commits…' : operation === 'stash' ? 'Generating stash message…' : operation === 'amend' ? 'Generating amend message…' : 'Generating commit message…', () => window.directoryAPI.generateCommitMessage([...selected], operation)); if (operation === 'planned-commits') { setPlannedCommits(result.commits || []); setExpandedPlannedCommit(null); setAiMessage('planned') } else setAiMessage(result) } catch (error) { setAiError(error.message); setErrorModal(error.message) } finally { setAiBusy(false) } }
   async function generateStashMergeMessage() { setPendingOperation('stash-merge'); setAiBusy(true); setAiError(''); try { setAiMessage(await runOperation('Generating stash merge message…', () => window.directoryAPI.generateStashMergeMessage(selectedStashes.map(stash => stash.ref)))) } catch (error) { setAiError(error.message); setErrorModal(error.message) } finally { setAiBusy(false) } }
   async function openDiff(file) { try { setDiffModal({ file, diff: await window.directoryAPI.getDiff(file) }) } catch (error) { setErrorModal(error.message) } }
+  function showDiff(file, diff) { setDiffModal({ file, diff }) }
   async function commitSelected() { const amend = pendingOperation === 'amend'; setAiBusy(true); setAiError(''); try { await runOperation(amend ? 'Amending commit…' : 'Creating commit…', () => window.directoryAPI.commitSelected([...selected], aiMessage, amend)); setAiMessage(''); setSelected(new Set()); setLastEvent(amend ? 'Commit amended' : 'Commit completed') } catch (error) { setAiError(error.message); setErrorModal(error.message) } finally { setAiBusy(false) } }
   async function commitPlanned() { setAiBusy(true); setAiError(''); try { const result = await runOperation('Executing planned commits…', () => window.directoryAPI.commitPlanned({ commits: plannedCommits })); if (result?.ok === false) { const completed = result.commits?.length || 0; setPlannedCommits(items => (items || []).slice(completed)); setExpandedPlannedCommit(null); const detail = `${completed} planned commit${completed === 1 ? '' : 's'} completed before the error. ${result.error || 'The remaining commits were not created.'}`; setAiError(detail); setErrorModal(detail); setLastEvent('Planned commits partially completed'); return } setAiMessage(''); setPlannedCommits(null); setSelected(new Set()); setLastEvent('Planned commits completed') } catch (error) { setAiError(error.message); setErrorModal(error.message) } finally { setAiBusy(false) } }
   async function moveSelected(files) { setGitBusy(true); try { await runOperation('Preparing file move…', () => window.directoryAPI.moveSelected(files)); setSelected(new Set()); setLastEvent('File move prepared for commit') } catch (error) { setErrorModal(error.message) } finally { setGitBusy(false) } }
@@ -257,6 +259,7 @@ function App() {
     refreshPendingCommitCount,
     toggleSelection,
     openDiff,
+    showDiff,
   }
   function renderPage() {
     if (view === 'home') return <HomePage projects={projects} directory={directory} defaultPathIcon={defaultPathIcon} choose={choose} openHomeProject={openHomeProject} editProject={editProject} projectName={projectName} LfsPill={LfsPill} />
@@ -264,6 +267,7 @@ function App() {
       changes: <ChangesPage {...pageProps} />,
       stash: <StashPage {...pageProps} stashes={stashes} />,
       history: <HistoryPage {...pageProps} runOperation={runOperation} setErrorModal={setErrorModal} />,
+      branches: <BranchesPage {...pageProps} runOperation={runOperation} setErrorModal={setErrorModal} />,
       lfs: <LfsPage {...pageProps} loading={loading} runOperation={runOperation} setErrorModal={setErrorModal} />,
     }
     return <><header className="page-header page-header-compact"><span className="eyebrow">WORKSPACE / MONITOR</span><WatchingPill active={active} starting={starting} indexing={fileIndexing.status === 'indexing'} directory={directory} stop={stop} resume={resume} /></header>{pages[view] || pages.changes}</>
@@ -280,6 +284,7 @@ function App() {
         <div className={`nav ${view === 'stash' ? 'active' : ''}`} onClick={() => setView('stash')}><i className="nav-icon stash-nav-icon" /><span>Stash</span><b className="nav-count">{cappedCount(stashes.length)}</b></div>
         {gitLfs && <div className={`nav ${view === 'lfs' ? 'active' : ''}`} onClick={() => setView('lfs')}><i className="nav-icon lfs-nav-icon" /><span>LFS</span></div>}
         <div className={`nav ${view === 'history' ? 'active' : ''}`} onClick={() => setView('history')}><i className="nav-icon history-nav-icon" /><span>History</span><b className="nav-count">{cappedCount(pendingCommitCount)}</b></div>
+        <div className={`nav ${view === 'branches' ? 'active' : ''}`} onClick={() => setView('branches')}><i className="nav-icon branch-nav-icon" /><span>Branches</span></div>
         <div className="side-footer"><div className="side-footer-info"><strong>Pulse Git AI</strong><span>v{appVersion} · ready</span></div>{updateRelease && <button className="update-pill" onClick={() => window.directoryAPI.openRelease(updateRelease.url)}>Update v{updateRelease.version}</button>}</div>
       </aside>
 
