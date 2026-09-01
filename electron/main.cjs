@@ -1074,9 +1074,9 @@ ipcMain.handle('get-stashes', async () => {
     return { ref, date, message: messageParts.join('|'), files }
   }))
 })
-ipcMain.handle('get-history', async () => {
+ipcMain.handle('get-history', async (_, { offset = 0, limit = 15 } = {}) => {
   if (!currentDirectory) return []
-  const output = await runGit(currentDirectory, ['log', '-n', '100', '--date=iso-strict', '--format=%H%x1f%h%x1f%an%x1f%ad%x1f%s%x1e'])
+  const output = await runGit(currentDirectory, ['log', '--skip', String(Math.max(0, Number(offset) || 0)), '-n', String(Math.min(50, Math.max(1, Number(limit) || 15))), '--date=iso-strict', '--format=%H%x1f%h%x1f%an%x1f%ad%x1f%s%x1e'])
   const commits = output.split('\x1e').map(value => value.trim()).filter(Boolean).map(value => {
     const [hash, shortHash, author, date, message] = value.split('\x1f')
     return { hash, shortHash, author, date, message }
@@ -1084,6 +1084,15 @@ ipcMain.handle('get-history', async () => {
   let remoteTags = new Set()
   try { remoteTags = new Set((await runGit(currentDirectory, ['ls-remote', '--tags', 'origin'])).split(/\r?\n/).map(line => line.match(/refs\/tags\/(.+?)(?:\^\{\})?$/)?.[1]).filter(Boolean)) } catch {}
   return Promise.all(commits.map(async commit => { const tags = (await runGit(currentDirectory, ['tag', '--points-at', commit.hash])).split(/\r?\n/).filter(Boolean); return { ...commit, tags, pushedTags: tags.filter(name => remoteTags.has(name)) } }))
+})
+ipcMain.handle('get-commit-files', async (_, hash) => {
+  if (!currentDirectory || !/^[0-9a-f]{7,64}$/i.test(String(hash || ''))) throw new Error('Invalid commit')
+  const output = await runGit(currentDirectory, ['show', '--format=', '--name-status', String(hash)])
+  return output.split(/\r?\n/).map(line => line.trim()).filter(Boolean).map(line => { const match = line.match(/^([^\t]+)\t(.+)$/); return match ? { status: match[1], file: match[2] } : { status: 'Modified', file: line } })
+})
+ipcMain.handle('get-commit-diff', async (_, { hash, file } = {}) => {
+  if (!currentDirectory || !/^[0-9a-f]{7,64}$/i.test(String(hash || '')) || typeof file !== 'string' || !file || file.includes('..') || path.isAbsolute(file)) throw new Error('Invalid commit file')
+  return runGit(currentDirectory, ['show', '--format=', '--find-renames', String(hash), '--', file])
 })
 ipcMain.handle('get-pending-commits', async () => {
   if (!currentDirectory) return []
@@ -1358,6 +1367,15 @@ ipcMain.handle('switch-branch', async (_, { target, newBranch, base, remote = fa
   }
   await publish('branch-switch')
   return { branch: await gitCurrentBranch(currentDirectory) }
+})
+ipcMain.handle('delete-branch', async (_, name) => {
+  if (!currentDirectory) throw new Error('No directory selected')
+  const branch = String(name || '').trim()
+  if (!branch) throw new Error('No branch selected')
+  if (branch === await gitCurrentBranch(currentDirectory)) throw new Error('Cannot delete the current branch')
+  const result = await runGit(currentDirectory, ['branch', '-d', branch])
+  await publish('branch-delete')
+  return result
 })
 ipcMain.handle('unstash', async (_, ref) => {
   if (!currentDirectory || !ref) throw new Error('No stash selected')
