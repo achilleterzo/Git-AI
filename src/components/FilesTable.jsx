@@ -50,7 +50,7 @@ function FilesTable({ changes, fileIndexing, query, onQueryChange, selected, exp
   const allPaths = visibleChanges.map(change => change.file)
   const allSelected = allPaths.length > 0 && allPaths.every(path => selected.has(path))
   const allPartial = allPaths.some(path => selected.has(path)) && !allSelected
-  const folderPaths = useMemo(() => { const paths = []; const collect = node => { for (const folder of node.folders.values()) { paths.push(folder.path); collect(folder) } }; collect(tree); return paths }, [tree])
+  const folderPaths = useMemo(() => { const paths = []; const collect = node => { if (node.path) paths.push(node.path); for (const folder of node.folders.values()) collect(folder) }; collect(tree); return paths }, [tree])
   const allFoldersExpanded = folderPaths.length > 0 && folderPaths.every(path => expanded.has(path))
   const someFolderExpanded = folderPaths.some(path => expanded.has(path))
 
@@ -187,7 +187,7 @@ function FilesTable({ changes, fileIndexing, query, onQueryChange, selected, exp
   }
 
   const statusFilters = statusCounts.length > 0 && <span className="head-status-filters">{statusCounts.map(([status, count]) => { const on = !hiddenStatuses.has(status); return <button key={status} type="button" className={`change-pill filter-pill ${statusTone(status)} ${on ? '' : 'off'}`} aria-pressed={on} title={on ? `Hide ${status.toLowerCase()} files` : `Show ${status.toLowerCase()} files`} onClick={() => toggleStatus(status)}>{status}<b>{count}</b></button> })}</span>
-  const expansionActions = <div className="tree-expansion-actions"><button className="ghost expansion-icon-button" title="Expand all folders" aria-label="Expand all folders" disabled={!expandAllFolders || folderPaths.length === 0 || allFoldersExpanded} onClick={expandAllFolders}><span className="chevron-icon chevron-down" /></button><button className="ghost expansion-icon-button" title="Collapse all folders" aria-label="Collapse all folders" disabled={!collapseAllFolders || folderPaths.length === 0 || !someFolderExpanded} onClick={collapseAllFolders}><span className="chevron-icon chevron-up" /></button></div>
+  const expansionActions = <div className="tree-expansion-actions"><button className="ghost expansion-icon-button" title="Expand all folders" aria-label="Expand all folders" disabled={!expandAllFolders || folderPaths.length === 0 || allFoldersExpanded} onClick={() => expandAllFolders(folderPaths)}><span className="chevron-icon chevron-down" /></button><button className="ghost expansion-icon-button" title="Collapse all folders" aria-label="Collapse all folders" disabled={!collapseAllFolders || folderPaths.length === 0 || !someFolderExpanded} onClick={collapseAllFolders}><span className="chevron-icon chevron-up" /></button></div>
   const selectedIgnoreTarget = getSelectionIgnoreEntries()
   const header = <div className="tree-head"><span className="head-selection"><SelectionBox checked={allSelected} indeterminate={allPartial} onChange={() => toggleAllSelection(allPaths)} /> FILE / DIRECTORY</span>{statusFilters}{expansionActions}</div>
   const body = changes.length ? <>{header}{renderTree(tree)}</> : <div className="empty"><div>✓</div><h3>{variant === 'changes' ? 'Working tree clean' : 'No pending changes'}</h3><p>{emptyMessage}</p>{variant === 'changes' && outgoingCommits > 0 && <button className="push-cta" disabled={gitBusy || outgoingCommits < 1} onClick={() => runGitRemote('push')}>↑ Push local commits ({outgoingCommits})</button>}</div>

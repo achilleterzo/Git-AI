@@ -210,7 +210,7 @@ aside { border-color:#30343a; background:#1b1e21 }
 .history-file { display:flex; align-items:center; gap:10px; padding:8px 9px; background:transparent; color:#cdd4d9; text-align:left; font-size:11px; }
 .history-file:hover { background:#30373b; color:#5eead4; }.history-file code { color:#e9bd70; }.history-file span { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }.history-file small { color:#89939a; font-size:9px; }.history-loading { padding:16px; color:#89939a; text-align:center; font-size:11px; }
 .planned-commits-modal { display:flex; flex-direction:column; width:min(720px, calc(100vw - 40px)); height:min(780px, calc(100vh - 40px)); max-height:calc(100vh - 40px); overflow:hidden; }
-.planned-commits-list { min-height:0; margin-top:16px; padding-right:4px; overflow-x:hidden; overflow-y:auto; overscroll-behavior:contain; }
+.planned-commits-list { flex:1 1 auto; min-height:0; margin-top:16px; padding-right:4px; overflow-x:hidden; overflow-y:auto; overscroll-behavior:contain; }
 .planned-commit-card { flex:0 0 auto; min-width:0; padding:0; overflow:hidden; cursor:default; }
 .planned-commit-card.expanded { border-color:#5eead4; background:#202326; }
 .planned-commit-summary { display:flex; align-items:center; justify-content:space-between; gap:18px; width:100%; padding:14px 16px; border:0; background:transparent; color:inherit; text-align:left; }
@@ -223,7 +223,7 @@ aside { border-color:#30343a; background:#1b1e21 }
 .planned-commit-details { min-width:0; padding:0 16px 16px; border-top:1px solid #3c4749; background:#202326; color:#e5e7eb; }
 .planned-commit-details label { margin-top:14px; }
 .planned-commit-details .compact-files-panel { margin-top:14px; }
-.planned-commits-modal > .modal-actions { flex:0 0 auto; }
+.planned-commits-modal > .modal-actions { flex:0 0 auto; margin-top:16px; }
 .planned-commit-details .file-changes-panel { width:100%; max-width:100%; min-width:0; background:#202326; }
 .planned-commit-details .tree-row,
 .planned-commit-details .tree-head { min-width:0; }

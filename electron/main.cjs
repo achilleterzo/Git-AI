@@ -1361,7 +1361,12 @@ ipcMain.handle('switch-branch', async (_, { target, newBranch, base, remote = fa
     await runGit(currentDirectory, baseName ? ['switch', '-c', branchName, baseName] : ['switch', '-c', branchName])
   } else if (remote) {
     const localName = switchTarget.slice(switchTarget.indexOf('/') + 1)
-    await runGit(currentDirectory, ['switch', '--track', '-c', localName, switchTarget])
+    const localBranches = await runGit(currentDirectory, ['for-each-ref', '--format=%(refname:short)', `refs/heads/${localName}`])
+    if (localBranches.trim() === localName) {
+      await runGit(currentDirectory, ['switch', localName])
+    } else {
+      await runGit(currentDirectory, ['switch', '--track', '-c', localName, switchTarget])
+    }
   } else {
     await runGit(currentDirectory, ['switch', switchTarget])
   }
