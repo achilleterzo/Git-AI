@@ -167,13 +167,23 @@ The application also displays incoming and outgoing commit counts for the curren
 
 ## AI
 
-Pulse currently integrates with Ollama.
+Pulse supports three AI providers:
 
-Configure the Ollama endpoint and model from:
+- Ollama, running locally through its HTTP API
+- Codex CLI, using the ChatGPT OAuth login
+- Claude CLI, using the Claude OAuth login
+
+Configure the AI provider, model and reasoning options from:
 
 ```text
 File → Settings…
 ```
+
+Ollama requires a running local Ollama service and a model. Codex and Claude
+require their respective command-line clients to be installed and available
+on the system `PATH`. Use the Login button in Settings to start the OAuth
+flow for the selected CLI, then refresh its status after completing the
+browser login. Pulse does not store or handle OAuth tokens.
 
 AI is used as an assistant for operations such as:
 
@@ -188,7 +198,9 @@ Git operations themselves remain explicit and under user control.
 
 - Git
 - Node.js
-- Ollama, if AI features are required
+- Ollama, if the Ollama provider is selected
+- Codex CLI, if the Codex provider is selected
+- Claude CLI, if the Claude provider is selected
 - Git LFS, if LFS features are required
 
 Desktop builds are available for Windows, macOS and Linux. Git must be installed and available on the system `PATH`; Git LFS is required only for repositories that use LFS. The integrated terminal uses PowerShell on Windows and the user's default shell on macOS/Linux.
@@ -246,6 +258,8 @@ npm start
 - xterm.js
 - node-pty
 - Ollama
+- Codex CLI
+- Claude CLI
 - native Git CLI
 
 ## Philosophy
