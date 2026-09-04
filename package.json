@@ -5,7 +5,7 @@
   "main": "electron/main.cjs",
   "scripts": {
     "dev": "concurrently -k \"vite\" \"wait-on http://localhost:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .\"",
-    "lint": "node --check electron/main.cjs",
+    "lint": "node --check electron/main.cjs && node --check electron/after-pack.cjs",
     "test": "npm run build",
     "build": "vite build",
     "dist:desktop": "npm run build && electron-builder --win",
@@ -38,6 +38,7 @@
   "build": {
     "appId": "local.pulse.gitai",
     "productName": "Pulse Git AI",
+    "afterPack": "electron/after-pack.cjs",
     "directories": {
       "output": "release"
     },
