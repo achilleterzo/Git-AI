@@ -89,6 +89,8 @@ function App() {
   const [pendingOperation, setPendingOperation] = useState('commit')
   const [lastEvent, setLastEvent] = useState('Waiting for a directory')
   const operationRef = useRef({ id: 0, timer: null })
+  const modelsRequestRef = useRef(0)
+  const shellTerminalRef = useRef(null)
   const progressHandlerRef = useRef(null)
   const visibleChanges = useMemo(() => changes.filter(c => c.file.toLowerCase().includes(query.toLowerCase())), [changes, query])
   const allPaths = visibleChanges.map(change => change.file)
@@ -97,7 +99,7 @@ function App() {
   async function runShellCommand(event) { event.preventDefault(); const command = consoleCommand.trim(); if (!command || !directory) return; setConsoleCommand(''); try { await window.directoryAPI.runShellCommand(command) } catch (error) { setConsoleLines(lines => [...lines, { at: new Date().toISOString(), message: `Error: ${error.message}` }].slice(-300)) } }
   async function generateAssistantPlan() { if (!directory || !assistantPrompt.trim()) return; setAssistantBusy(true); setAssistantPlan(null); try { setAssistantPlan(await window.directoryAPI.generateProjectPlan(assistantPrompt)) } catch (error) { setErrorModal(error.message) } finally { setAssistantBusy(false) } }
   async function applyAssistantPlan() { if (!assistantPlan?.changes?.length) return; setAssistantBusy(true); try { await window.directoryAPI.applyProjectPlan(assistantPlan.changes); setAssistantOpen(false); setAssistantPlan(null); setAssistantPrompt('') } catch (error) { setErrorModal(error.message) } finally { setAssistantBusy(false) } }
-  async function copyConsoleContent(kind) { const content = kind === 'request' ? (aiPromptLog ? JSON.stringify(aiPromptLog, null, 2) : 'No AI request recorded yet.') : (consoleLines.length ? consoleLines.map(line => `[${line.at ? new Date(line.at).toLocaleTimeString() : '--:--:--'}] ${line.message}`).join('\n') : 'No service log entries yet.'); try { await navigator.clipboard.writeText(content) } catch { setConsoleLines(lines => [...lines, { at: new Date().toISOString(), message: 'Could not copy console content.' }].slice(-300)) } }
+  async function copyConsoleContent(kind) { const content = kind === 'request' ? (aiPromptLog ? JSON.stringify(aiPromptLog, null, 2) : 'No AI request recorded yet.') : kind === 'shell' || consoleTab === 'shell' ? (() => { const terminal = window.__pulseTerminal; if (!terminal) return 'No terminal output yet.'; terminal.selectAll(); const text = terminal.getSelection(); terminal.clearSelection(); return text || 'No terminal output yet.' })() : (consoleLines.length ? consoleLines.map(line => `[${line.at ? new Date(line.at).toLocaleTimeString() : '--:--:--'}] ${line.message}`).join('\n') : 'No service log entries yet.'); try { await navigator.clipboard.writeText(content) } catch { setConsoleLines(lines => [...lines, { at: new Date().toISOString(), message: 'Could not copy console content.' }].slice(-300)) } }
 
   useEffect(() => { window.directoryAPI.getSettings().then(result => setSettings(result || defaultAiSettings)); window.directoryAPI.getAppVersion().then(version => { setAppVersion(version); window.directoryAPI.getLatestRelease().then(release => { if (release?.version && compareVersions(release.version, version) > 0) setUpdateRelease(release) }).catch(() => {}) }).catch(() => {}); window.directoryAPI.getProjects().then(async result => { const savedProjects = normalizeProjects(result); setProjects(savedProjects); const lastProject = savedProjects.slice().sort((a, b) => (b.lastOpened || 0) - (a.lastOpened || 0))[0]; if (lastProject?.lastOpened) await runOperation('Restoring project…', () => openSelectedDirectory(lastProject.path, lastProject)); else setView('home') }).catch(error => { setView('home'); setErrorModal(String(error?.message || error)) }); window.directoryAPI.onOpenSettings(() => setSettingsOpen(true)); window.directoryAPI.onOpenAbout(() => setAboutOpen(true)); window.directoryAPI.onOpenProjectAssistant(() => { setAssistantPlan(null); setAssistantOpen(true) }); return undefined }, [])
   useEffect(() => { window.directoryAPI.onOperationLog(data => setConsoleLines(lines => [...lines, { ...data, message: String(data?.message || '') }].slice(-300))); return undefined }, [])
@@ -181,7 +183,26 @@ function App() {
   function collapseAllFolders() { setExpanded(new Set()) }
   async function refreshPendingCommitCount() { try { const commits = await window.directoryAPI.getPendingCommits(); setPendingCommitCount(Array.isArray(commits) ? commits.length : 0) } catch { setPendingCommitCount(0) } }
   function toggleSelection(paths) { setSelected(value => { const next = new Set(value); const all = paths.every(path => next.has(path)); paths.forEach(path => all ? next.delete(path) : next.add(path)); return next }) }
-  async function loadModels(provider = settings.provider, endpoint = settings.providers?.[provider]?.endpoint) { setAiError(''); setModelsLoading(true); setModels([]); try { const result = await window.directoryAPI.fetchModels(provider, endpoint); const currentModel = settings.providers?.[provider]?.model || ''; setModels(value => currentModel && !result.includes(currentModel) ? [currentModel, ...result] : result); if (provider === 'ollama' && !currentModel && result[0]) setSettings(value => ({ ...value, providers: { ...value.providers, ollama: { ...value.providers?.ollama, model: result[0] } } })); return result } catch (error) { setAiError(error.message); return null } finally { setModelsLoading(false) } }
+  async function loadModels(provider = settings.provider, endpoint = settings.providers?.[provider]?.endpoint) {
+    const requestId = modelsRequestRef.current + 1
+    modelsRequestRef.current = requestId
+    setAiError('')
+    setModelsLoading(true)
+    setModels([])
+    try {
+      const result = await window.directoryAPI.fetchModels(provider, endpoint)
+      if (modelsRequestRef.current !== requestId) return null
+      const currentModel = settings.providers?.[provider]?.model || ''
+      setModels(currentModel && !result.includes(currentModel) ? [currentModel, ...result] : result)
+      if (provider === 'ollama' && !currentModel && result[0]) setSettings(value => ({ ...value, providers: { ...value.providers, ollama: { ...value.providers?.ollama, model: result[0] } } }))
+      return result
+    } catch (error) {
+      if (modelsRequestRef.current === requestId) setAiError(error.message)
+      return null
+    } finally {
+      if (modelsRequestRef.current === requestId) setModelsLoading(false)
+    }
+  }
   async function refreshAiStatus(provider = settings.provider) { setAiStatusLoading(true); try { const result = await window.directoryAPI.getAiStatus(provider); setAiStatus(result); return result } catch (error) { setAiStatus({ provider, installed: false, authenticated: false, error: error.message }); return null } finally { setAiStatusLoading(false) } }
   async function loginAiProvider() { setAiError(''); try { await window.directoryAPI.loginAiProvider(settings.provider); setAiError('Login started in the provider client. Complete the browser flow, then refresh status.'); setTimeout(() => refreshAiStatus(settings.provider), 2500) } catch (error) { setAiError(error.message) } }
   async function saveAiSettings() { setAiError(''); try { const saved = await window.directoryAPI.saveSettings(settings); setSettings(value => ({ ...value, ...saved })); setSettingsOpen(false) } catch (error) { setErrorModal(error.message) } }

@@ -1,13 +1,23 @@
-import { useEffect, useRef } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 
-export default function TerminalConsole({ directory, visible = true }) {
+const TerminalConsole = forwardRef(function TerminalConsole({ directory, visible = true }, ref) {
   const containerRef = useRef(null)
   const terminalRef = useRef(null)
   const fitRef = useRef(null)
   const sessionRef = useRef(null)
+  useImperativeHandle(ref, () => ({
+    getText: () => {
+      const terminal = terminalRef.current
+      if (!terminal) return ''
+      terminal.selectAll()
+      const text = terminal.getSelection()
+      terminal.clearSelection()
+      return text
+    },
+  }), [])
 
   useEffect(() => {
     if (!containerRef.current || !directory) return undefined
@@ -24,6 +34,7 @@ export default function TerminalConsole({ directory, visible = true }) {
     terminal.open(containerRef.current)
     terminal.focus()
     terminalRef.current = terminal
+    window.__pulseTerminal = terminal
     fitRef.current = fit
     const focusTerminal = () => terminal.focus()
     containerRef.current.addEventListener('click', focusTerminal)
@@ -40,7 +51,7 @@ export default function TerminalConsole({ directory, visible = true }) {
       resize()
     }).catch(error => terminal.write(`\r\n\x1b[31m${error.message}\x1b[0m\r\n`))
     resize()
-    return () => { disposed = true; observer.disconnect(); input.dispose(); dataCleanup?.(); exitCleanup?.(); containerRef.current?.removeEventListener('click', focusTerminal); const sessionId = sessionRef.current; sessionRef.current = null; if (sessionId !== null) void window.directoryAPI.stopTerminal(sessionId); terminalRef.current = null; fitRef.current = null; terminal.dispose() }
+    return () => { disposed = true; observer.disconnect(); input.dispose(); dataCleanup?.(); exitCleanup?.(); containerRef.current?.removeEventListener('click', focusTerminal); const sessionId = sessionRef.current; sessionRef.current = null; if (sessionId !== null) void window.directoryAPI.stopTerminal(sessionId); if (window.__pulseTerminal === terminal) delete window.__pulseTerminal; terminalRef.current = null; fitRef.current = null; terminal.dispose() }
   }, [directory])
 
   useEffect(() => {
@@ -50,4 +61,6 @@ export default function TerminalConsole({ directory, visible = true }) {
   }, [visible])
 
   return <div className="terminal-console" ref={containerRef} />
-}
+})
+
+export default TerminalConsole
