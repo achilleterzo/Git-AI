@@ -1309,12 +1309,30 @@ async function runGitRemote(command) {
   if (!currentDirectory) throw new Error('No directory selected')
   sendOperationLog(`${command === 'pull' ? 'Pull' : 'Push'} started`)
   let args = ['-C', currentDirectory, command, '--progress']
-  if (command === 'push') {
+  if (command === 'pull' || command === 'push') {
     const branch = await gitCurrentBranch(currentDirectory)
+    if (!branch) throw new Error(`Cannot ${command} while HEAD is detached`)
     const hasUpstream = await runGit(currentDirectory, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']).then(() => true).catch(() => false)
-    if (!hasUpstream) args = ['-C', currentDirectory, 'push', '--progress', '--set-upstream', 'origin', branch]
+    if (!hasUpstream) {
+      sendOperationLog(`Linking ${branch} to origin/${branch}`)
+      // Supplying the matching remote branch lets pull fetch and merge in one
+      // operation, while --set-upstream persists the tracking relationship.
+      args = ['-C', currentDirectory, command, '--progress', '--set-upstream', 'origin', branch]
+    }
   }
-  const output = await runGitStreaming(args)
+  let output
+  try {
+    output = await runGitStreaming(args)
+  } catch (error) {
+    if (command !== 'pull' || !/refusing to merge unrelated histories/i.test(String(error?.message || ''))) throw error
+    // A local repository and a remote repository can each have their own root
+    // commit (for example when both were initialized independently). Retry only
+    // this specific failure; ordinary pulls keep Git's default safety checks.
+    sendOperationLog('Local and remote histories are unrelated; combining them')
+    const retryArgs = [...args]
+    retryArgs.splice(retryArgs.indexOf('pull') + 1, 0, '--allow-unrelated-histories')
+    output = await runGitStreaming(retryArgs)
+  }
   sendOperationLog(`${command === 'pull' ? 'Pull' : 'Push'} completed`)
   return output || `${command} completed`
 }
