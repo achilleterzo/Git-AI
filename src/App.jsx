@@ -23,7 +23,7 @@ const compareVersions = (left, right) => { const a = String(left || '').split('.
 const formatSize = (n) => n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`
 const cappedCount = count => Number(count) > 999 ? '+999' : String(Number(count) || 0)
 const OPERATION_TIMEOUT_MS = 180000
-const defaultAiSettings = { aiEnabled: false, provider: 'ollama', providers: { ollama: { endpoint: 'http://localhost:11434', model: '', reasoning: 'instant' }, codex: { model: '', reasoning: 'instant' }, claude: { model: '', reasoning: 'instant' } }, language: 'English' }
+const defaultAiSettings = { aiEnabled: false, provider: 'ollama', providers: { ollama: { endpoint: 'http://localhost:11434', model: '', reasoning: 'instant' }, 'ollama-cloud': { model: '', reasoning: 'instant' }, codex: { model: '', reasoning: 'instant' }, claude: { model: '', reasoning: 'instant' } }, language: 'English' }
 
 function App() {
   const [directory, setDirectory] = useState('')
@@ -183,18 +183,18 @@ function App() {
   function collapseAllFolders() { setExpanded(new Set()) }
   async function refreshPendingCommitCount() { try { const commits = await window.directoryAPI.getPendingCommits(); setPendingCommitCount(Array.isArray(commits) ? commits.length : 0) } catch { setPendingCommitCount(0) } }
   function toggleSelection(paths) { setSelected(value => { const next = new Set(value); const all = paths.every(path => next.has(path)); paths.forEach(path => all ? next.delete(path) : next.add(path)); return next }) }
-  async function loadModels(provider = settings.provider, endpoint = settings.providers?.[provider]?.endpoint) {
+  async function loadModels(provider = settings.provider, endpoint = settings.providers?.[provider]?.endpoint, apiKey = '') {
     const requestId = modelsRequestRef.current + 1
     modelsRequestRef.current = requestId
     setAiError('')
     setModelsLoading(true)
     setModels([])
     try {
-      const result = await window.directoryAPI.fetchModels(provider, endpoint)
+      const result = await window.directoryAPI.fetchModels(provider, endpoint, apiKey)
       if (modelsRequestRef.current !== requestId) return null
       const currentModel = settings.providers?.[provider]?.model || ''
       setModels(currentModel && !result.includes(currentModel) ? [currentModel, ...result] : result)
-      if (provider === 'ollama' && !currentModel && result[0]) setSettings(value => ({ ...value, providers: { ...value.providers, ollama: { ...value.providers?.ollama, model: result[0] } } }))
+      if ((provider === 'ollama' || provider === 'ollama-cloud') && !currentModel && result[0]) setSettings(value => ({ ...value, providers: { ...value.providers, [provider]: { ...value.providers?.[provider], model: result[0] } } }))
       return result
     } catch (error) {
       if (modelsRequestRef.current === requestId) setAiError(error.message)

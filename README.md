@@ -167,9 +167,10 @@ The application also displays incoming and outgoing commit counts for the curren
 
 ## AI
 
-Pulse supports three AI providers:
+Pulse supports four AI providers:
 
 - Ollama, running locally through its HTTP API
+- Ollama Cloud, using an API key stored with the operating system credential protection
 - Codex CLI, using the ChatGPT OAuth login
 - Claude CLI, using the Claude OAuth login
 
@@ -179,7 +180,9 @@ Configure the AI provider, model and reasoning options from:
 File → Settings…
 ```
 
-Ollama requires a running local Ollama service and a model. Codex and Claude
+Ollama requires a running local Ollama service and a model. Ollama Cloud
+requires an API key from `ollama.com`; Pulse stores it separately from the
+settings file using Electron's encrypted secure storage. Codex and Claude
 require their respective command-line clients to be installed and available
 on the system `PATH`. Use the Login button in Settings to start the OAuth
 flow for the selected CLI, then refresh its status after completing the
@@ -199,6 +202,7 @@ Git operations themselves remain explicit and under user control.
 - Git
 - Node.js
 - Ollama, if the Ollama provider is selected
+- an Ollama Cloud API key, if the Ollama Cloud provider is selected
 - Codex CLI, if the Codex provider is selected
 - Claude CLI, if the Claude provider is selected
 - Git LFS, if LFS features are required

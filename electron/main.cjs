@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, Menu, screen, shell } = require('electron')
+const { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage, screen, shell } = require('electron')
 const { execFile, execFileSync, spawn } = require('child_process')
 const pty = require('node-pty')
 const os = require('os')
@@ -20,6 +20,7 @@ let projects = []
 let terminalProcess
 let terminalSession = 0
 let lastDirectoryDialogPath = ''
+let ollamaCloudSessionApiKey = ''
 const pendingOperationLogs = []
 const fileIndexCache = new Map()
 const FILE_INDEX_DEBOUNCE_MS = 250
@@ -56,6 +57,26 @@ function windowStatePath() { return path.join(app.getPath('userData'), 'window-s
 function settingsPath() { return path.join(app.getPath('userData'), 'settings.json') }
 function projectsPath() { return path.join(app.getPath('userData'), 'projects.json') }
 function dialogStatePath() { return path.join(app.getPath('userData'), 'dialog-state.json') }
+function ollamaCloudCredentialPath() { return path.join(app.getPath('userData'), 'ollama-cloud-key.bin') }
+function loadOllamaCloudApiKey() {
+  try {
+    if (!safeStorage.isEncryptionAvailable()) return ''
+    return safeStorage.decryptString(Buffer.from(fs.readFileSync(ollamaCloudCredentialPath(), 'utf8'), 'base64'))
+  } catch { return '' }
+}
+function saveOllamaCloudApiKey(value) {
+  if (!safeStorage.isEncryptionAvailable()) throw new Error('Secure credential storage is unavailable on this system')
+  const credentialPath = ollamaCloudCredentialPath()
+  const apiKey = String(value || '').trim()
+  ollamaCloudSessionApiKey = apiKey
+  if (!apiKey) {
+    try { fs.unlinkSync(credentialPath) } catch {}
+    return true
+  }
+  fs.mkdirSync(path.dirname(credentialPath), { recursive: true })
+  fs.writeFileSync(credentialPath, safeStorage.encryptString(apiKey).toString('base64'), { encoding: 'utf8', mode: 0o600 })
+  return true
+}
 function loadDialogState() { try { return JSON.parse(fs.readFileSync(dialogStatePath(), 'utf8')) } catch { return {} } }
 function saveDialogState() { fs.mkdirSync(app.getPath('userData'), { recursive: true }); fs.writeFileSync(dialogStatePath(), JSON.stringify({ lastDirectoryDialogPath }, null, 2)) }
 function loadProjects() { try { return JSON.parse(fs.readFileSync(projectsPath(), 'utf8')).map(project => typeof project === 'string' ? { path: project, icon: findProjectIcon(project), lastOpened: 0 } : { lastOpened: 0, ...project }).filter(project => typeof project?.path === 'string' && project.path && fs.existsSync(project.path)) } catch { return [] } }
@@ -68,7 +89,7 @@ function normalizeProviderConfig(provider, value = {}, legacy = {}) {
   return normalized
 }
 function normalizeAiSettings(settings = {}) {
-  const provider = ['ollama', 'codex', 'claude'].includes(settings.provider) ? settings.provider : 'ollama'
+  const provider = ['ollama', 'ollama-cloud', 'codex', 'claude'].includes(settings.provider) ? settings.provider : 'ollama'
   const savedProviders = settings.providers && typeof settings.providers === 'object' ? settings.providers : {}
   const legacy = { model: settings.model, reasoning: settings.reasoning, endpoint: settings.endpoint }
   return {
@@ -76,6 +97,7 @@ function normalizeAiSettings(settings = {}) {
     provider,
     providers: {
       ollama: normalizeProviderConfig('ollama', savedProviders.ollama, provider === 'ollama' ? legacy : {}),
+      'ollama-cloud': normalizeProviderConfig('ollama-cloud', savedProviders['ollama-cloud'], provider === 'ollama-cloud' ? legacy : {}),
       codex: normalizeProviderConfig('codex', savedProviders.codex, provider === 'codex' ? legacy : {}),
       claude: normalizeProviderConfig('claude', savedProviders.claude, provider === 'claude' ? legacy : {})
     },
@@ -106,29 +128,37 @@ function terminalShell() {
   const file = process.env.SHELL || (process.platform === 'darwin' ? '/bin/zsh' : '/bin/bash')
   return { file, args: ['-il'] }
 }
-function thinkingPayload() {
-  const reasoning = providerConfig('ollama').reasoning
+function thinkingPayload(provider = 'ollama') {
+  const reasoning = providerConfig(provider).reasoning
   return reasoning === 'instant' ? { think: false } : { think: reasoning }
 }
-async function requestChatWithThinking(endpoint, body) {
-  try { return await requestJson(`${endpoint}/api/chat`, { method: 'POST' }, { ...body, ...thinkingPayload() }) } catch (error) {
-    if (providerConfig('ollama').reasoning === 'instant') throw error
-    return requestJson(`${endpoint}/api/chat`, { method: 'POST' }, { ...body, think: true })
+async function requestChatWithThinking(endpoint, body, provider = 'ollama', options = {}) {
+  try { return await requestJson(`${endpoint}/api/chat`, { ...options, method: 'POST' }, { ...body, ...thinkingPayload(provider) }) } catch (error) {
+    if (providerConfig(provider).reasoning === 'instant') throw error
+    return requestJson(`${endpoint}/api/chat`, { ...options, method: 'POST' }, { ...body, think: true })
   }
 }
-async function requestGenerateWithThinking(endpoint, body) {
-  try { return await requestJson(`${endpoint}/api/generate`, { method: 'POST' }, { ...body, ...thinkingPayload() }) } catch (error) {
-    if (providerConfig('ollama').reasoning === 'instant') throw error
-    return requestJson(`${endpoint}/api/generate`, { method: 'POST' }, { ...body, think: true })
+async function requestGenerateWithThinking(endpoint, body, provider = 'ollama', options = {}) {
+  try { return await requestJson(`${endpoint}/api/generate`, { ...options, method: 'POST' }, { ...body, ...thinkingPayload(provider) }) } catch (error) {
+    if (providerConfig(provider).reasoning === 'instant') throw error
+    return requestJson(`${endpoint}/api/generate`, { ...options, method: 'POST' }, { ...body, think: true })
   }
 }
-const AI_PROVIDER_LABELS = { ollama: 'Ollama', codex: 'Codex', claude: 'Claude' }
+const OLLAMA_CLOUD_URL = 'https://ollama.com'
+const AI_PROVIDER_LABELS = { ollama: 'Ollama', 'ollama-cloud': 'Ollama Cloud', codex: 'Codex', claude: 'Claude' }
 const AI_CLI_TIMEOUT_MS = 180000
 
-function aiProvider() { return ['ollama', 'codex', 'claude'].includes(aiSettings?.provider) ? aiSettings.provider : 'ollama' }
+function aiProvider() { return ['ollama', 'ollama-cloud', 'codex', 'claude'].includes(aiSettings?.provider) ? aiSettings.provider : 'ollama' }
+function ollamaCloudApiKey(value = '') { return String(value || ollamaCloudSessionApiKey || loadOllamaCloudApiKey()).trim() }
+function ollamaCloudRequestOptions(apiKey = '') {
+  const key = ollamaCloudApiKey(apiKey)
+  if (!key) throw new Error('Ollama Cloud API key required')
+  return { headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' } }
+}
 function assertAiConfigured() {
   if (!aiSettings?.aiEnabled) throw new Error('AI generation is disabled in Settings')
   if (aiProvider() === 'ollama' && (!providerConfig('ollama').endpoint || !providerConfig('ollama').model)) throw new Error('Configure the Ollama endpoint and model in Settings')
+  if (aiProvider() === 'ollama-cloud' && (!ollamaCloudApiKey() || !providerConfig('ollama-cloud').model)) throw new Error('Configure the Ollama Cloud API key and model in Settings')
 }
 function knownWindowsCliCommand(name) {
   if (process.platform !== 'win32') return null
@@ -259,6 +289,7 @@ async function requestCliPrompt(provider, prompt) {
 async function requestAiChat(body) {
   const provider = aiProvider()
   if (provider === 'ollama') return requestChatWithThinking(providerConfig('ollama').endpoint, body)
+  if (provider === 'ollama-cloud') return requestChatWithThinking(OLLAMA_CLOUD_URL, body, provider, ollamaCloudRequestOptions())
   const prompt = serializeAiMessages(body.messages)
   sendRenderer('ai-prompt-log', { at: new Date().toISOString(), provider, mode: 'cli', prompt })
   return { message: { role: 'assistant', content: await requestCliPrompt(provider, prompt) } }
@@ -266,13 +297,18 @@ async function requestAiChat(body) {
 async function requestAiGenerate(body) {
   const provider = aiProvider()
   if (provider === 'ollama') return requestGenerateWithThinking(providerConfig('ollama').endpoint, body)
+  if (provider === 'ollama-cloud') {
+    const result = await requestChatWithThinking(OLLAMA_CLOUD_URL, { model: body.model, messages: [{ role: 'user', content: String(body.prompt || '') }], stream: false }, provider, ollamaCloudRequestOptions())
+    return { response: String(result?.message?.content || '') }
+  }
   const prompt = String(body.prompt || '')
   sendRenderer('ai-prompt-log', { at: new Date().toISOString(), provider, mode: 'cli', prompt })
   return { response: await requestCliPrompt(provider, prompt) }
 }
 async function getAiProviderStatus(provider = aiProvider()) {
-  const selected = ['codex', 'claude'].includes(provider) ? provider : 'ollama'
+  const selected = ['ollama-cloud', 'codex', 'claude'].includes(provider) ? provider : 'ollama'
   if (selected === 'ollama') return { provider: selected, label: AI_PROVIDER_LABELS[selected], installed: true, authenticated: false, configured: Boolean(providerConfig('ollama').endpoint && providerConfig('ollama').model) }
+  if (selected === 'ollama-cloud') return { provider: selected, label: AI_PROVIDER_LABELS[selected], installed: true, authenticated: Boolean(ollamaCloudApiKey()), configured: Boolean(ollamaCloudApiKey() && providerConfig(selected).model) }
   const command = cliCommand(selected)
   const status = await runCliStatus(command, selected === 'codex' ? ['login', 'status'] : ['auth', 'status'], selected)
   return { provider: selected, label: AI_PROVIDER_LABELS[selected], command, installed: !status.missing, authenticated: status.ok, configured: status.ok }
@@ -346,13 +382,17 @@ function requestJson(urlString, options = {}, body = null) {
     const client = url.protocol === 'https:' ? https : http
     serviceLog('INFO', '[Ollama] request', JSON.stringify({ url: urlString, method: options.method || 'GET', payload: body }, null, 2))
     if (/\/api\/(chat|generate)$/.test(url.pathname)) sendRenderer('ai-prompt-log', { at: new Date().toISOString(), url: urlString, payload: body })
-    const request = client.request(url, { method: options.method || 'GET', headers: { ...(body ? { 'Content-Type': 'application/json' } : {}) }, timeout: 120000 }, response => {
+    const request = client.request(url, { method: options.method || 'GET', headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...(options.headers || {}) }, timeout: 120000 }, response => {
       let data = ''
       response.setEncoding('utf8')
       response.on('data', chunk => { data += chunk })
       response.on('end', () => {
         serviceLog('INFO', '[Ollama] response', JSON.stringify({ url: urlString, status: response.statusCode, body: data }, null, 2))
-        if (response.statusCode < 200 || response.statusCode >= 300) return reject(new Error(`HTTP ${response.statusCode}`))
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          let detail = data
+          try { detail = JSON.parse(data)?.error || detail } catch {}
+          return reject(new Error(`HTTP ${response.statusCode}${detail ? `: ${String(detail).slice(0, 200)}` : ''}`))
+        }
         try { resolve(JSON.parse(data)) } catch { reject(new Error('Invalid JSON response')) }
       })
     })
@@ -831,6 +871,8 @@ ipcMain.handle('git-changes', () => currentDirectory ? gitChanges(currentDirecto
 ipcMain.handle('get-settings', () => aiSettings)
 ipcMain.handle('get-ai-status', async (_, provider) => getAiProviderStatus(provider || aiProvider()))
 ipcMain.handle('login-ai-provider', async (_, provider) => loginAiProvider(provider || aiProvider()))
+ipcMain.handle('has-ollama-cloud-api-key', () => Boolean(loadOllamaCloudApiKey()))
+ipcMain.handle('save-ollama-cloud-api-key', (_, value) => saveOllamaCloudApiKey(value))
 ipcMain.handle('get-app-version', () => app.getVersion())
 ipcMain.handle('open-devtools', () => { if (!app.isPackaged && win && !win.isDestroyed()) win.webContents.openDevTools({ mode: 'detach' }); return !app.isPackaged })
 ipcMain.handle('get-latest-release', async () => { try { return await fetchLatestRelease() } catch (error) { serviceLog('ERROR', '[Update] release check failed', error); throw error } })
@@ -840,6 +882,12 @@ ipcMain.handle('fetch-models', async (_, request = {}) => {
   const provider = typeof request === 'string' ? 'ollama' : (request.provider || aiProvider())
   if (provider === 'claude') return CLAUDE_MODEL_ALIASES
   if (provider === 'codex') return requestCodexModels()
+  if (provider === 'ollama-cloud') {
+    const suppliedApiKey = String(request.apiKey || '').trim()
+    const data = await requestJson(`${OLLAMA_CLOUD_URL}/api/tags`, { ...ollamaCloudRequestOptions(suppliedApiKey), method: 'GET' })
+    if (suppliedApiKey) ollamaCloudSessionApiKey = suppliedApiKey
+    return (data.models || []).map(model => model.name || model.model).filter(Boolean)
+  }
   const endpoint = typeof request === 'string' ? request : request.endpoint
   if (!endpoint) throw new Error('Configure the Ollama endpoint in Settings')
   const data = await requestJson(`${String(endpoint).replace(/\/$/, '')}/api/tags`)
