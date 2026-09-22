@@ -645,9 +645,11 @@ function gitAheadBehind(directory) {
   return new Promise(resolve => execFile('git', ['-C', directory, 'rev-list', '--left-right', '--count', '@{u}...HEAD'], { windowsHide: true, timeout: 10000 }, (error, stdout) => {
     if (!error) {
       const [incoming, outgoing] = stdout.trim().split(/\s+/).map(value => Number.parseInt(value, 10) || 0)
-      return resolve({ incoming, outgoing })
+      return resolve({ incoming, outgoing, hasUpstream: true })
     }
-    execFile('git', ['-C', directory, 'rev-list', '--count', 'HEAD'], { windowsHide: true, timeout: 10000 }, (headError, headStdout) => resolve({ incoming: 0, outgoing: headError ? 0 : Number.parseInt(headStdout.trim(), 10) || 0 }))
+    // A new local branch has no upstream yet. Count only commits that are not
+    // reachable from origin instead of presenting the entire history as pending.
+    execFile('git', ['-C', directory, 'rev-list', '--count', 'HEAD', '--not', '--remotes=origin'], { windowsHide: true, timeout: 10000 }, (headError, headStdout) => resolve({ incoming: 0, outgoing: headError ? 0 : Number.parseInt(headStdout.trim(), 10) || 0, hasUpstream: false }))
   }))
 }
 function gitCurrentBranch(directory) {
@@ -729,18 +731,18 @@ async function publish(reason = 'refresh', generation = watchGeneration) {
       currentDirectory = null
       watchGeneration += 1
       publishQueued = false
-      sendRenderer('directory-update', { directory: '', removedDirectory: directory, projectIcon: null, files: [], changes: [], incomingCommits: 0, outgoingCommits: 0, branch: '', gitLfs: false, hasCommits: false, gitOk: false, reason: 'directory-removed', error: null, at: new Date().toISOString() })
+      sendRenderer('directory-update', { directory: '', removedDirectory: directory, projectIcon: null, files: [], changes: [], incomingCommits: 0, outgoingCommits: 0, hasUpstream: false, branch: '', gitLfs: false, hasCommits: false, gitOk: false, reason: 'directory-removed', error: null, at: new Date().toISOString() })
       return null
     }
     const gitError = results[0].status === 'rejected' ? `Git: ${results[0].reason.message}` : null
     if (directory === currentDirectory && generation === watchGeneration) {
-      const aheadBehind = results[1].status === 'fulfilled' ? results[1].value : { incoming: 0, outgoing: 0 }
+      const aheadBehind = results[1].status === 'fulfilled' ? results[1].value : { incoming: 0, outgoing: 0, hasUpstream: false }
       const branch = results[2].status === 'fulfilled' ? results[2].value : ''
       const gitLfs = results[3].status === 'fulfilled' ? results[3].value : false
       const hasCommits = results[4].status === 'fulfilled' ? results[4].value : false
       const project = projects.find(item => item.path === directory)
       if (project && project.gitLfs !== gitLfs) { project.gitLfs = gitLfs; persistProjects() }
-      const update = { directory, projectIcon: findProjectIcon(directory), changes, incomingCommits: aheadBehind.incoming, outgoingCommits: aheadBehind.outgoing, branch, gitLfs, hasCommits, gitOk: results[0].status === 'fulfilled', indexing: getFileIndexState(directory).status, reason, error: gitError, at: new Date().toISOString() }
+      const update = { directory, projectIcon: findProjectIcon(directory), changes, incomingCommits: aheadBehind.incoming, outgoingCommits: aheadBehind.outgoing, hasUpstream: aheadBehind.hasUpstream, branch, gitLfs, hasCommits, gitOk: results[0].status === 'fulfilled', indexing: getFileIndexState(directory).status, reason, error: gitError, at: new Date().toISOString() }
       sendRenderer('directory-update', update)
       return update
     }
@@ -1145,7 +1147,11 @@ ipcMain.handle('get-commit-diff', async (_, { hash, file } = {}) => {
 ipcMain.handle('get-pending-commits', async () => {
   if (!currentDirectory) return []
   let output = ''
-  try { output = await runGit(currentDirectory, ['log', '@{u}..HEAD', '--format=%H%x1f%h%x1f%an%x1f%ad%x1f%s', '--date=iso-strict']) } catch { return [] }
+  const hasUpstream = await runGit(currentDirectory, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']).then(() => true).catch(() => false)
+  try {
+    const revisionArgs = hasUpstream ? ['@{u}..HEAD'] : ['HEAD', '--not', '--remotes=origin']
+    output = await runGit(currentDirectory, ['log', ...revisionArgs, '--format=%H%x1f%h%x1f%an%x1f%ad%x1f%s', '--date=iso-strict'])
+  } catch { return [] }
   return output.split(/\r?\n/).filter(Boolean).map(line => { const [hash, shortHash, author, date, message] = line.split('\x1f'); return { hash, shortHash, author, date, message } })
 })
 ipcMain.handle('amend-commit-message', async (_, message) => {

@@ -2,7 +2,7 @@ import BranchSwitcher from './BranchSwitcher'
 import LfsPill from './LfsPill'
 import { useEffect, useRef, useState } from 'react'
 
-export default function RepositoryActionsBar({ directory, currentBranch, gitLfs, onBranchSwitch, incomingCommits, outgoingCommits, hasCommits, selected, changes = [], aiBusy, gitBusy, generateCommitMessage, moveSelected, generateStashMergeMessage, runGitRemote, requestPush, requestRevert, requestDeleteStash, selectedStashes = [], selectedStashFiles = [], restoreStash, mergeStashes, onTagCommit, showCommit = false, showMove = false, showAmend = false, showPull = false, showPush = false, showStash = false, showStashOutside = false, showRestore = false, showRevert = false, showDeleteStash = false, showTag = false }) {
+export default function RepositoryActionsBar({ directory, currentBranch, gitLfs, onBranchSwitch, incomingCommits, outgoingCommits, hasUpstream = true, hasCommits, selected, changes = [], aiBusy, gitBusy, generateCommitMessage, moveSelected, generateStashMergeMessage, runGitRemote, requestPush, requestRevert, requestDeleteStash, selectedStashes = [], selectedStashFiles = [], restoreStash, mergeStashes, onTagCommit, showCommit = false, showMove = false, showAmend = false, showPull = false, showPush = false, showStash = false, showStashOutside = false, showRestore = false, showRevert = false, showDeleteStash = false, showTag = false }) {
   const [moreOpen, setMoreOpen] = useState(false)
   const [stuck, setStuck] = useState(false)
   const barRef = useRef(null)
@@ -29,7 +29,7 @@ export default function RepositoryActionsBar({ directory, currentBranch, gitLfs,
       </div>
       <div className="repository-action-buttons">
         {showPull && <button className="git-button" disabled={!directory || gitBusy} onClick={() => runGitRemote('pull')}>↓ Pull ({incomingCommits})</button>}
-        {showPush && <button className="git-button" disabled={!directory || gitBusy || outgoingCommits < 1} onClick={() => requestPush()}>↑ Push ({outgoingCommits})</button>}
+        {showPush && <button className="git-button" disabled={!directory || !currentBranch || gitBusy || (hasUpstream && outgoingCommits < 1)} onClick={() => requestPush()}>{hasUpstream ? `↑ Push (${outgoingCommits})` : '↑ Publish branch'}</button>}
         {showTag && <button className="git-button" disabled={!directory || gitBusy} onClick={() => onTagCommit()}>◇ Release tag</button>}
         {showCommit && <button className="git-button" disabled={!selected.size || aiBusy} onClick={() => generateCommitMessage()}>{aiBusy ? 'Generating…' : '✦ Commit'}</button>}
         {showStashOutside && <button className="git-button" disabled={!selected.size || aiBusy} onClick={() => generateCommitMessage('stash')}>{aiBusy ? 'Generating…' : '✦ Stash'}</button>}

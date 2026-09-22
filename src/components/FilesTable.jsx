@@ -36,7 +36,7 @@ function SelectionBox({ checked, indeterminate, onChange }) {
   return <button type="button" className={`selection-switch ${checked ? 'enabled' : ''} ${indeterminate ? 'indeterminate' : ''}`} role="switch" aria-checked={indeterminate ? 'mixed' : checked} aria-label={checked ? 'Deselect' : 'Select'} onClick={event => { event.stopPropagation(); onChange() }}><span /></button>
 }
 
-function FilesTable({ changes, fileIndexing, query, onQueryChange, selected, expanded, toggleFolder, toggleSelection, expandAllFolders, collapseAllFolders, openDiff, addGitignoreEntry, addGitignoreSelection, variant = 'changes', title = 'Changes to commit', emptyMessage = 'No added, deleted, or modified files to commit.', outgoingCommits = 0, gitBusy, runGitRemote, compact = false, readOnly = false }) {
+function FilesTable({ changes, fileIndexing, query, onQueryChange, selected, expanded, toggleFolder, toggleSelection, expandAllFolders, collapseAllFolders, openDiff, addGitignoreEntry, addGitignoreSelection, variant = 'changes', title = 'Changes to commit', emptyMessage = 'No added, deleted, or modified files to commit.', outgoingCommits = 0, hasUpstream = true, gitBusy, runGitRemote, compact = false, readOnly = false }) {
   const tree = useMemo(() => buildTree(changes), [changes])
   const [hiddenStatuses, setHiddenStatuses] = useState(() => new Set())
   const [contextMenu, setContextMenu] = useState(null)
@@ -190,7 +190,7 @@ function FilesTable({ changes, fileIndexing, query, onQueryChange, selected, exp
   const expansionActions = <div className="tree-expansion-actions"><button className="ghost expansion-icon-button" title="Expand all folders" aria-label="Expand all folders" disabled={!expandAllFolders || folderPaths.length === 0 || allFoldersExpanded} onClick={() => expandAllFolders(folderPaths)}><span className="chevron-icon chevron-down" /></button><button className="ghost expansion-icon-button" title="Collapse all folders" aria-label="Collapse all folders" disabled={!collapseAllFolders || folderPaths.length === 0 || !someFolderExpanded} onClick={collapseAllFolders}><span className="chevron-icon chevron-up" /></button></div>
   const selectedIgnoreTarget = getSelectionIgnoreEntries()
   const header = <div className="tree-head"><span className="head-selection"><SelectionBox checked={allSelected} indeterminate={allPartial} onChange={() => toggleAllSelection(allPaths)} /> FILE / DIRECTORY</span>{statusFilters}{expansionActions}</div>
-  const body = changes.length ? <>{header}{renderTree(tree)}</> : <div className="empty"><div>✓</div><h3>{variant === 'changes' ? 'Working tree clean' : 'No pending changes'}</h3><p>{emptyMessage}</p>{variant === 'changes' && outgoingCommits > 0 && <button className="push-cta" disabled={gitBusy || outgoingCommits < 1} onClick={() => runGitRemote('push')}>↑ Push local commits ({outgoingCommits})</button>}</div>
+  const body = changes.length ? <>{header}{renderTree(tree)}</> : <div className="empty"><div>✓</div><h3>{variant === 'changes' ? 'Working tree clean' : 'No pending changes'}</h3><p>{emptyMessage}</p>{variant === 'changes' && outgoingCommits > 0 && <button className="push-cta" disabled={gitBusy} onClick={() => runGitRemote('push')}>{hasUpstream ? `↑ Push local commits (${outgoingCommits})` : '↑ Publish branch'}</button>}</div>
 
   return (
     <div className={`panel file-changes-panel ${variant === 'stash' ? 'stash-panel' : ''} ${compact ? 'compact-files-panel' : ''} ${readOnly ? 'read-only-files-panel' : ''}`}>
@@ -212,6 +212,6 @@ function FilesTable({ changes, fileIndexing, query, onQueryChange, selected, exp
 // Operation state (loading/AI activity) changes at the App level, but it does
 // not change this tree. Avoid rebuilding thousands of rows for every spinner
 // tick or modal update in a large repository.
-const sameFilesTableState = (previous, next) => previous.changes === next.changes && previous.selected === next.selected && previous.expanded === next.expanded && previous.query === next.query && previous.variant === next.variant && previous.title === next.title && previous.emptyMessage === next.emptyMessage && previous.outgoingCommits === next.outgoingCommits && previous.gitBusy === next.gitBusy && previous.compact === next.compact && previous.readOnly === next.readOnly && previous.fileIndexing?.status === next.fileIndexing?.status && previous.fileIndexing?.error === next.fileIndexing?.error
+const sameFilesTableState = (previous, next) => previous.changes === next.changes && previous.selected === next.selected && previous.expanded === next.expanded && previous.query === next.query && previous.variant === next.variant && previous.title === next.title && previous.emptyMessage === next.emptyMessage && previous.outgoingCommits === next.outgoingCommits && previous.hasUpstream === next.hasUpstream && previous.gitBusy === next.gitBusy && previous.compact === next.compact && previous.readOnly === next.readOnly && previous.fileIndexing?.status === next.fileIndexing?.status && previous.fileIndexing?.error === next.fileIndexing?.error
 
 export default React.memo(FilesTable, sameFilesTableState)

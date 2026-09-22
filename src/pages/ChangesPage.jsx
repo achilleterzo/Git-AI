@@ -2,7 +2,7 @@ import ProjectToolbar from '../components/ProjectToolbar'
 import RepositoryActionsBar from '../components/RepositoryActionsBar'
 import FilesTable from '../components/FilesTable'
 
-export default function ChangesPage({ directory, projects, choose, selectProject, removeProjectOption, active, stop, resume, defaultPathIcon, emptyDirectory, checkoutRemote, setCheckoutRemote, initializeEmptyDirectory, checkoutEmptyDirectory, currentBranch, gitLfs, onBranchSwitch, incomingCommits, outgoingCommits, hasCommits, selected, aiBusy, gitBusy, generateCommitMessage, moveSelected, addGitignoreEntry, addGitignoreSelection, runGitRemote, requestPush, requestRevert, changes, fileIndexing, query, setQuery, expanded, toggleFolder, toggleSelection, expandAllFolders, collapseAllFolders, openDiff }) {
+export default function ChangesPage({ directory, projects, choose, selectProject, removeProjectOption, active, stop, resume, defaultPathIcon, emptyDirectory, checkoutRemote, setCheckoutRemote, initializeEmptyDirectory, checkoutEmptyDirectory, currentBranch, gitLfs, onBranchSwitch, incomingCommits, outgoingCommits, hasUpstream, hasCommits, selected, aiBusy, gitBusy, generateCommitMessage, moveSelected, addGitignoreEntry, addGitignoreSelection, runGitRemote, requestPush, requestRevert, changes, fileIndexing, query, setQuery, expanded, toggleFolder, toggleSelection, expandAllFolders, collapseAllFolders, openDiff }) {
   return (
     <div className="tab-page changes-page">
       {emptyDirectory && (
@@ -22,8 +22,8 @@ export default function ChangesPage({ directory, projects, choose, selectProject
         </div>
       )}
       <ProjectToolbar {...{ directory, projects, choose, selectProject, removeProjectOption, active, stop, resume, defaultPathIcon }} />
-      <RepositoryActionsBar {...{ directory, currentBranch, gitLfs, onBranchSwitch, incomingCommits, outgoingCommits, hasCommits, selected, changes, aiBusy, gitBusy, generateCommitMessage, moveSelected, runGitRemote, requestPush, requestRevert }} showPull showPush showCommit showMove showAmend={hasCommits} showStash showRevert />
-      <FilesTable {...{ changes, fileIndexing, query, selected, expanded, toggleFolder, toggleSelection, expandAllFolders, collapseAllFolders, openDiff, addGitignoreEntry, addGitignoreSelection, outgoingCommits, gitBusy, runGitRemote }} onQueryChange={setQuery} />
+      <RepositoryActionsBar {...{ directory, currentBranch, gitLfs, onBranchSwitch, incomingCommits, outgoingCommits, hasUpstream, hasCommits, selected, changes, aiBusy, gitBusy, generateCommitMessage, moveSelected, runGitRemote, requestPush, requestRevert }} showPull showPush showCommit showMove showAmend={hasCommits} showStash showRevert />
+      <FilesTable {...{ changes, fileIndexing, query, selected, expanded, toggleFolder, toggleSelection, expandAllFolders, collapseAllFolders, openDiff, addGitignoreEntry, addGitignoreSelection, outgoingCommits, hasUpstream, gitBusy, runGitRemote }} onQueryChange={setQuery} />
     </div>
   )
 }

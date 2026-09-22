@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import RepositoryActionsBar from '../components/RepositoryActionsBar'
 import ProjectToolbar from '../components/ProjectToolbar'
 
-export default function BranchesPage({ directory, projects, choose, selectProject, removeProjectOption, active, stop, resume, defaultPathIcon, currentBranch, gitLfs, onBranchSwitch, incomingCommits, outgoingCommits, runGitRemote, requestPush, runOperation, setErrorModal }) {
+export default function BranchesPage({ directory, projects, choose, selectProject, removeProjectOption, active, stop, resume, defaultPathIcon, currentBranch, gitLfs, onBranchSwitch, incomingCommits, outgoingCommits, hasUpstream, runGitRemote, requestPush, runOperation, setErrorModal }) {
   const [branches, setBranches] = useState({ local: [], remote: [], remoteUrl: '' })
   const [newBranch, setNewBranch] = useState('')
 
@@ -22,7 +22,7 @@ export default function BranchesPage({ directory, projects, choose, selectProjec
   }
   return <div className="branches-page">
     <ProjectToolbar {...{ directory, projects, choose, selectProject, removeProjectOption, active, stop, resume, defaultPathIcon }} />
-    <RepositoryActionsBar {...{ directory, currentBranch, gitLfs, onBranchSwitch, incomingCommits, outgoingCommits, runGitRemote, requestPush, selected: new Set(), gitBusy: false, showPull: true, showPush: true }} />
+    <RepositoryActionsBar {...{ directory, currentBranch, gitLfs, onBranchSwitch, incomingCommits, outgoingCommits, hasUpstream, runGitRemote, requestPush, selected: new Set(), gitBusy: false, showPull: true, showPush: true }} />
     <div className="branches-toolbar"><div><h1>Branches</h1><p className="muted">Create, switch and clean up the branches in this repository.</p></div><button className="ghost" onClick={refresh}>Refresh</button></div>
     <form className="branch-create-page" onSubmit={createBranch}><label>New branch<div className="branch-input-group"><input value={newBranch} onChange={event => setNewBranch(event.target.value)} placeholder="feature/my-branch" /><button className="primary" disabled={!newBranch.trim()}>Create and switch</button></div></label></form>
     <section className="branch-section"><div className="branch-section-head"><h2>Local branches</h2><span>{branches.local.length}</span></div><div className="branch-list">{branches.local.map(name => <div className={`branch-row ${name === currentBranch ? 'current' : ''}`} key={name}><div><strong>{name}</strong>{name === currentBranch && <small>Current branch</small>}</div><div className="branch-row-actions"><button className="ghost" disabled={name === currentBranch} onClick={() => switchBranch(name)}>Switch</button><button className="ghost danger-button" disabled={name === currentBranch} onClick={() => deleteBranch(name)}>Delete</button></div></div>)}</div></section>
