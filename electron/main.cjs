@@ -1445,6 +1445,57 @@ ipcMain.handle('switch-branch', async (_, { target, newBranch, base, remote = fa
   await publish('branch-switch')
   return { branch: await gitCurrentBranch(currentDirectory) }
 })
+ipcMain.handle('generate-branch-name', async () => {
+  if (!currentDirectory) throw new Error('No directory selected')
+  assertAiConfigured()
+  const changes = await gitChanges(currentDirectory)
+  if (!changes.length) throw new Error('There are no changes to name a branch after')
+  const hasCommits = await gitHasCommits(currentDirectory)
+  const numstat = hasCommits ? await runGit(currentDirectory, ['diff', 'HEAD', '--numstat', '--no-renames'], 30000).catch(() => '') : ''
+  const prompt = `TASK: Write exactly one Git branch name for the following uncommitted changes, following Conventional Commits naming.
+FORMAT: <type>/<short-kebab-case-description>
+ALLOWED TYPES: feat, fix, refactor, chore, docs, test
+OUTPUT RULES: Return one line only, lowercase ASCII letters, digits and hyphens in the description, at most 50 characters in total. No spaces, markdown, quotes or explanation. The description must be in English.
+
+CHANGED FILES AND STATUS:
+${changes.map(change => `${change.code} ${change.file}`).join('\n').slice(0, 8000)}
+
+DIFF STAT:
+${numstat.slice(0, 4000)}`
+  const result = await requestAiGenerate({ model: providerConfig().model, prompt, stream: false })
+  const raw = String(result.response || '').trim().split(/\r?\n/)[0].replace(/^['"`]+|['"`]+$/g, '').trim().toLowerCase()
+  const [type, ...rest] = raw.split('/')
+  const slug = (rest.join('-') || type).replace(/[^a-z0-9-]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 45)
+  const branchType = ['feat', 'fix', 'refactor', 'chore', 'docs', 'test'].includes(type) && rest.length ? type : 'feat'
+  if (!slug) throw new Error(`${AI_PROVIDER_LABELS[aiProvider()]} returned an empty branch name.`)
+  return `${branchType}/${slug}`
+})
+ipcMain.handle('create-branch-from-changes', async (_, { name, base } = {}) => {
+  if (!currentDirectory) throw new Error('No directory selected')
+  const branchName = String(name || '').trim()
+  const baseName = String(base || '').trim()
+  if (!branchName) throw new Error('Enter a branch name')
+  if (!baseName) throw new Error('Select the branch to start from')
+  await runGit(currentDirectory, ['check-ref-format', '--branch', branchName]).catch(() => { throw new Error(`"${branchName}" is not a valid branch name`) })
+  if ((await runGit(currentDirectory, ['for-each-ref', '--format=%(refname:short)', `refs/heads/${branchName}`])).trim()) throw new Error(`Branch "${branchName}" already exists`)
+  const hasChanges = (await gitChanges(currentDirectory)).length > 0
+  if (hasChanges) await runGit(currentDirectory, ['stash', 'push', '-u', '-m', `Auto stash before creating ${branchName}`], 60000)
+  try {
+    await runGit(currentDirectory, ['switch', '--no-track', '-c', branchName, baseName])
+  } catch (error) {
+    if (hasChanges) await runGit(currentDirectory, ['stash', 'pop'], 60000).catch(() => {})
+    throw error
+  }
+  if (hasChanges) {
+    try { await runGit(currentDirectory, ['stash', 'pop'], 60000) } catch (error) {
+      await publish('branch-switch')
+      throw new Error(`Branch "${branchName}" was created, but the stashed changes could not be applied cleanly (they are still saved in the stash): ${error.message}`)
+    }
+  }
+  sendOperationLog(`Created branch ${branchName} from ${baseName}${hasChanges ? ' carrying the working changes' : ''}`)
+  await publish('branch-switch')
+  return { branch: await gitCurrentBranch(currentDirectory) }
+})
 ipcMain.handle('delete-branch', async (_, name) => {
   if (!currentDirectory) throw new Error('No directory selected')
   const branch = String(name || '').trim()

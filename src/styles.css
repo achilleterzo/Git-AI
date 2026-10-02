@@ -552,3 +552,8 @@ aside { position:fixed; inset:0 auto 0 0; z-index:5; height:100vh; }
   50% { transform:scale(.72); box-shadow:0 0 0 6px rgba(240,169,60,.05), 0 0 3px rgba(240,169,60,.5); }
 }
 @media (prefers-reduced-motion: reduce) { .watching-pill.starting i { animation:none; box-shadow:0 0 0 3px rgba(240,169,60,.16), 0 0 11px #f0a93c; } }
+
+.modal label { display:block; margin-top:12px; font-size:11px; color:#aab1b8; }
+.modal label select, .modal label .branch-input-group input { width:100%; margin-top:6px; padding:9px; border:1px solid #454b51; border-radius:7px; background:#17191c; color:#edf0f2; font-size:11px; outline:none; }
+.modal label .branch-input-group { gap:8px; }
+.modal label .branch-input-group input { margin-top:0; flex:1; }

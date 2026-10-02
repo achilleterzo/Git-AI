@@ -54,6 +54,8 @@ contextBridge.exposeInMainWorld('directoryAPI', {
   getBranches: () => ipcRenderer.invoke('get-branches'),
   connectRemote: (url) => ipcRenderer.invoke('connect-remote', String(url || '')),
   switchBranch: (options) => ipcRenderer.invoke('switch-branch', options),
+  generateBranchName: () => ipcRenderer.invoke('generate-branch-name'),
+  createBranchFromChanges: (name, base) => ipcRenderer.invoke('create-branch-from-changes', { name: String(name || ''), base: String(base || '') }),
   deleteBranch: (name) => ipcRenderer.invoke('delete-branch', String(name || '')),
   unstash: (ref) => ipcRenderer.invoke('unstash', ref),
   unstashMany: (refs) => ipcRenderer.invoke('unstash-many', refs),
