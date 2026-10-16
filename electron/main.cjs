@@ -528,20 +528,23 @@ async function runFileIndexing(directory, generation) {
   }
 }
 function gitChanges(directory) {
-  return new Promise((resolve, reject) => execFile('git', ['-C', directory, 'status', '--porcelain=v1', '--untracked-files=all'], { windowsHide: true, timeout: 30000, maxBuffer: 128 * 1024 * 1024 }, (error, stdout, stderr) => {
+  return new Promise((resolve, reject) => execFile('git', ['-C', directory, 'status', '--porcelain=v1', '-z', '--untracked-files=all'], { windowsHide: true, timeout: 30000, maxBuffer: 128 * 1024 * 1024 }, (error, stdout, stderr) => {
     if (error) return reject(new Error(stderr.trim() || error.message))
-    resolve(stdout.split(/\r?\n/).filter(Boolean).map(line => {
+    const records = stdout.split('\0')
+    const changes = []
+    for (let index = 0; index < records.length; index += 1) {
+      const line = records[index]
+      if (!line) continue
       const code = line.slice(0, 2)
       let file = line.slice(3)
-      // Porcelain v1 renders renames as: "old path" -> "new path".
-      // The UI and subsequent git commands must receive only the destination.
+      // With -z, rename and copy records contain the destination first and
+      // the source in the following NUL-delimited record.
       if (code.includes('R') || code.includes('C')) {
-        const arrow = file.lastIndexOf(' -> ')
-        if (arrow >= 0) file = file.slice(arrow + 4)
+        index += 1
       }
-      file = file.replace(/^"|"$/g, '')
-      return { file, code, status: code === '??' || code.includes('A') ? 'Added' : code.includes('D') ? 'Deleted' : 'Modified' }
-    }))
+      changes.push({ file, code, status: code === '??' || code.includes('A') ? 'Added' : code.includes('D') ? 'Deleted' : 'Modified' })
+    }
+    resolve(changes)
   }))
 }
 function ensureGitRepository(directory) {
