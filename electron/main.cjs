@@ -1032,13 +1032,15 @@ ipcMain.handle('generate-commit-message', async (_, { files, operation = 'commit
   const diffRecords = diffOutputs.flatMap(parseNumstat)
   const diffStat = diffRecords.filter(record => isSelectedPath(record.file)).map(record => `${record.added}\t${record.deleted}\t${record.file}`).join('\n')
   if (!fileList.trim() && !untracked.length) throw new Error('No diff available for the selected files')
-  const selectedSet = new Set(normalizedSelected)
+  // Use the concrete changed paths as the source of truth. A selection can
+  // represent a folder, while the AI plan must always contain individual files.
+  const selectedSet = new Set(selectedChanges.map(change => change.file.replaceAll('\\', '/')))
   const prompt = operation === 'planned-commits' ? `TASK: Plan several small, coherent Git commits for the selected changes.
 MANDATORY LANGUAGE: ${aiSettings.language}. Every message MUST be written entirely in ${aiSettings.language}.
 OUTPUT: Return ONLY valid JSON, exactly {"commits":[{"files":["path"],"message":"type(scope): description"}]}.
 Every selected file must appear exactly once, and every commit must contain at least one file. Use Conventional Commits messages. Do not include the plan, reasoning, markdown or extra fields in messages.
-SELECTED FILES AND STATUS:
-${fileList.slice(0, 8000)}
+SELECTED FILES AND STATUS (include every path exactly once; copy paths verbatim):
+${fileList}
 
 DIFF STAT:
 ${diffStat.slice(0, 4000)}` : operation === 'stash' ? `TASK: Write a short label for temporary, unfinished work that is being saved in a Git stash.
@@ -1096,16 +1098,31 @@ ${diffStat.slice(0, 4000)}`
     try {
       const plan = JSON.parse(finalContent.replace(/^```json\s*|\s*```$/g, '').trim())
       if (!Array.isArray(plan.commits) || !plan.commits.length) throw new Error('The AI returned no planned commits')
-      const allowed = new Set(normalizedSelected)
+      const allowed = new Set(selectedSet)
       const used = new Set()
-      plan.commits = plan.commits.map(commit => {
+      const commits = plan.commits.map(commit => {
         const commitFiles = Array.isArray(commit.files) ? commit.files.map(file => String(file).replaceAll('\\', '/')) : []
-        if (!commitFiles.length || !String(commit.message || '').trim()) throw new Error('Each planned commit needs files and a message')
-        commitFiles.forEach(file => { if (!allowed.has(file) || used.has(file)) throw new Error(`Invalid or duplicated planned file: ${file}`); used.add(file) })
-        return { files: commitFiles, message: String(commit.message).trim() }
-      })
-      if (used.size !== allowed.size) throw new Error('The plan does not cover every selected file')
-      return plan
+        const message = String(commit.message || '').trim()
+        if (!message) return null
+        // AI responses can repeat or invent paths. Keep the first valid
+        // assignment and reconcile omissions below so every selected file is
+        // still committed exactly once.
+        const uniqueFiles = commitFiles.filter(file => {
+          if (!allowed.has(file) || used.has(file)) return false
+          used.add(file)
+          return true
+        })
+        return uniqueFiles.length ? { files: uniqueFiles, message } : null
+      }).filter(Boolean)
+      if (!commits.length) throw new Error('The AI returned no usable planned commits')
+      const missing = [...allowed].filter(file => !used.has(file))
+      if (missing.length) {
+        // Attach omitted files to the smallest existing group to keep the
+        // correction local and preserve the model's proposed commit messages.
+        const target = commits.reduce((smallest, commit) => commit.files.length < smallest.files.length ? commit : smallest)
+        target.files.push(...missing)
+      }
+      return { commits }
     } catch (error) { throw new Error(`Invalid planned commits response: ${error.message}`) }
   }
   const message = finalContent.split(/\r?\n/)[0].replace(/^['"`]+|['"`]+$/g, '').trim()
