@@ -819,6 +819,19 @@ async function startWatching(directory) {
   sendFileIndexUpdate(directory, getFileIndexState(directory))
   await publish('started', generation)
 }
+// Keeps the incoming-commit counter honest without user action. Failures
+// (offline, no remote, credentials needed) are silent: it is best-effort.
+const BACKGROUND_FETCH_MS = 5 * 60 * 1000
+let backgroundFetchRunning = false
+setInterval(async () => {
+  const directory = currentDirectory
+  if (!directory || backgroundFetchRunning) return
+  backgroundFetchRunning = true
+  try {
+    await runGitWithEnv(directory, ['fetch', '--prune', 'origin'], { GIT_TERMINAL_PROMPT: '0' }, 60000)
+    if (directory === currentDirectory) schedulePublish('background-fetch')
+  } catch {} finally { backgroundFetchRunning = false }
+}, BACKGROUND_FETCH_MS).unref()
 function openDirectory() { dialog.showOpenDialog(win, { properties: ['openDirectory'] }).then(result => { if (result.filePaths[0]) startWatching(result.filePaths[0]) }) }
 function buildMenu() { Menu.setApplicationMenu(Menu.buildFromTemplate([{ label: 'File', submenu: [{ label: 'AI .gitignore Assistant…', click: () => win.webContents.send('open-project-assistant') }, { label: 'Settings…', click: () => win.webContents.send('open-settings') }, { label: 'About Pulse Git AI', click: () => win.webContents.send('open-about') }, { type: 'separator' }, { role: 'quit' }] }])) }
 
@@ -1418,15 +1431,101 @@ async function runGitRemoteTag(tagName) {
 }
 ipcMain.handle('git-pull', async () => { const result = await runGitRemote('pull'); await publish('git-pull'); return result })
 ipcMain.handle('git-push', async () => { const result = await runGitRemote('push'); await publish('git-push'); return result })
+async function gitMergeState(directory) {
+  const merging = await runGit(directory, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']).then(() => true).catch(() => false)
+  if (!merging) return { merging: false, conflicts: [], source: '' }
+  const [unmerged, message] = await Promise.all([
+    runGit(directory, ['diff', '--name-only', '--diff-filter=U', '-z']).catch(() => ''),
+    runGit(directory, ['rev-parse', '--git-path', 'MERGE_MSG']).then(file => fs.readFileSync(path.resolve(directory, file), 'utf8').split(/\r?\n/)[0]).catch(() => ''),
+  ])
+  return { merging: true, conflicts: unmerged.split('\0').filter(Boolean), source: message.replace(/^Merge (remote-tracking )?branch '?([^']*)'?.*$/, '$2') }
+}
+async function runGitFetch() {
+  if (!currentDirectory) throw new Error('No directory selected')
+  const remote = await runGit(currentDirectory, ['remote', 'get-url', 'origin']).catch(() => '')
+  if (!remote) throw new Error('No remote "origin" is configured')
+  sendOperationLog('Fetch started')
+  const output = await runGitStreaming(['-C', currentDirectory, 'fetch', '--prune', '--progress', 'origin'])
+  sendOperationLog('Fetch completed')
+  return output || 'fetch completed'
+}
+ipcMain.handle('git-fetch', async () => { const result = await runGitFetch(); await publish('git-fetch'); return result })
+ipcMain.handle('get-merge-state', async () => currentDirectory ? gitMergeState(currentDirectory) : { merging: false, conflicts: [], source: '' })
+ipcMain.handle('git-merge', async (_, { source, stash = false } = {}) => {
+  if (!currentDirectory) throw new Error('No directory selected')
+  const directory = currentDirectory
+  const sourceName = String(source || '').trim()
+  const branch = await gitCurrentBranch(directory)
+  if (!branch) throw new Error('Cannot merge while HEAD is detached')
+  if (!sourceName) throw new Error('No branch selected')
+  const refs = await runGit(directory, ['for-each-ref', '--format=%(refname:short)', 'refs/heads', 'refs/remotes'])
+  if (!refs.split(/\r?\n/).includes(sourceName)) throw new Error(`Branch "${sourceName}" does not exist`)
+  if (sourceName === branch) throw new Error('Cannot merge a branch into itself')
+  if ((await gitMergeState(directory)).merging) throw new Error('A merge is already in progress. Resolve or abort it first')
+  let stashed = false
+  if (stash && (await gitChanges(directory)).length) {
+    await runGit(directory, ['stash', 'push', '-u', '-m', `Auto stash before merging ${sourceName}`], 60000)
+    stashed = true
+  }
+  sendOperationLog(`Merging ${sourceName} into ${branch}`)
+  let output = ''
+  try {
+    output = await runGitStreaming(['-C', directory, 'merge', '--no-edit', sourceName])
+  } catch (error) {
+    const state = await gitMergeState(directory)
+    if (state.merging) {
+      await publish('git-merge')
+      return { status: 'conflicts', conflicts: state.conflicts, stashKept: stashed }
+    }
+    // Git refused before touching the tree, so the stash can be restored.
+    if (stashed) await runGit(directory, ['stash', 'pop'], 60000).catch(() => '')
+    throw error
+  }
+  let stashKept = false
+  if (stashed) stashKept = !(await runGit(directory, ['stash', 'pop'], 60000).then(() => true).catch(() => false))
+  sendOperationLog(`Merge of ${sourceName} completed`)
+  await publish('git-merge')
+  return { status: /already up to date/i.test(output) ? 'up-to-date' : 'merged', conflicts: [], stashKept }
+})
+ipcMain.handle('merge-resolve-file', async (_, { file, side } = {}) => {
+  if (!currentDirectory) throw new Error('No directory selected')
+  const state = await gitMergeState(currentDirectory)
+  if (!state.merging) throw new Error('No merge in progress')
+  const target = String(file || '')
+  if (!state.conflicts.includes(target)) throw new Error(`"${target}" is not in conflict`)
+  if (side === 'ours' || side === 'theirs') await runGit(currentDirectory, ['checkout', `--${side}`, '--', target])
+  else if (side !== 'manual') throw new Error('Unknown resolution')
+  await runGit(currentDirectory, ['add', '--', target])
+  await publish('merge-resolve')
+  return gitMergeState(currentDirectory)
+})
+ipcMain.handle('merge-abort', async () => {
+  if (!currentDirectory) throw new Error('No directory selected')
+  await runGit(currentDirectory, ['merge', '--abort'])
+  sendOperationLog('Merge aborted')
+  await publish('merge-abort')
+  return { ok: true }
+})
+ipcMain.handle('merge-continue', async () => {
+  if (!currentDirectory) throw new Error('No directory selected')
+  const state = await gitMergeState(currentDirectory)
+  if (!state.merging) throw new Error('No merge in progress')
+  if (state.conflicts.length) throw new Error(`${state.conflicts.length} file${state.conflicts.length === 1 ? ' is' : 's are'} still in conflict`)
+  await runGit(currentDirectory, ['commit', '--no-edit'])
+  sendOperationLog('Merge completed')
+  await publish('merge-continue')
+  return { ok: true }
+})
 ipcMain.handle('get-branches', async () => {
   if (!currentDirectory) return { current: '', local: [], remote: [], remoteUrl: '' }
   const [localOutput, remoteOutput, remoteUrl] = await Promise.all([
     runGit(currentDirectory, ['for-each-ref', '--format=%(refname:short)', 'refs/heads']),
-    runGit(currentDirectory, ['for-each-ref', '--format=%(refname:short)', 'refs/remotes']),
+    // The short name of refs/remotes/origin/HEAD is just "origin", so filter on the full refname.
+    runGit(currentDirectory, ['for-each-ref', '--format=%(refname:short)\t%(refname)', 'refs/remotes']),
     runGit(currentDirectory, ['remote', 'get-url', '--push', 'origin']).catch(() => runGit(currentDirectory, ['remote', 'get-url', 'origin']).catch(() => '')),
   ])
   const local = localOutput.split(/\r?\n/).map(value => value.trim()).filter(Boolean)
-  const remote = remoteOutput.split(/\r?\n/).map(value => value.trim()).filter(value => value && !value.endsWith('/HEAD'))
+  const remote = remoteOutput.split(/\r?\n/).map(line => line.split('\t')).filter(([short, full]) => short?.trim() && full && !full.endsWith('/HEAD')).map(([short]) => short.trim())
   return { current: await gitCurrentBranch(currentDirectory), local, remote, remoteUrl: remoteUrl.trim() }
 })
 ipcMain.handle('connect-remote', async (_, remoteUrl) => {
