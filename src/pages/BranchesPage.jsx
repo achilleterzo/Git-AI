@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import RepositoryActionsBar from '../components/RepositoryActionsBar'
 import ProjectToolbar from '../components/ProjectToolbar'
 
-export default function BranchesPage({ directory, projects, choose, selectProject, removeProjectOption, active, stop, resume, defaultPathIcon, currentBranch, gitLfs, onBranchSwitch, incomingCommits, outgoingCommits, hasUpstream, runGitRemote, requestPush, runOperation, setErrorModal, changes = [] }) {
+export default function BranchesPage({ directory, projects, choose, selectProject, removeProjectOption, active, stop, resume, defaultPathIcon, currentBranch, gitLfs, onBranchSwitch, incomingCommits, outgoingCommits, hasUpstream, runGitRemote, requestPush, runOperation, setErrorModal, changes = [], refsVersion = 0 }) {
   const [branches, setBranches] = useState({ local: [], remote: [], remoteUrl: '' })
   const [newBranch, setNewBranch] = useState('')
   const [fromChanges, setFromChanges] = useState(null)
@@ -22,7 +22,7 @@ export default function BranchesPage({ directory, projects, choose, selectProjec
   }
 
   async function refresh() { try { setBranches(await window.directoryAPI.getBranches()); setMergeState(await window.directoryAPI.getMergeState()) } catch (error) { setErrorModal(error.message) } }
-  useEffect(() => { if (directory) refresh() }, [directory, currentBranch])
+  useEffect(() => { if (directory) refresh() }, [directory, currentBranch, refsVersion])
   // Conflict resolution happens in the editor too, so follow working tree updates.
   useEffect(() => { if (directory) window.directoryAPI.getMergeState().then(setMergeState).catch(() => {}) }, [changes])
   async function fetchRemote() {
