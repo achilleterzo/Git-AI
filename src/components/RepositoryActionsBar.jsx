@@ -29,7 +29,7 @@ export default function RepositoryActionsBar({ directory, currentBranch, gitLfs,
       </div>
       <div className="repository-action-buttons">
         {showPull && <button className="git-button" disabled={!directory || gitBusy} onClick={() => runGitRemote('pull')}>↓ Pull ({incomingCommits})</button>}
-        {showPush && <button className="git-button" disabled={!directory || !currentBranch || gitBusy || (hasUpstream && outgoingCommits < 1)} onClick={() => requestPush()}>{hasUpstream ? `↑ Push (${outgoingCommits})` : '↑ Publish branch'}</button>}
+        {showPush && <button className="git-button" disabled={!directory || !currentBranch || !hasCommits || gitBusy || (hasUpstream && outgoingCommits < 1)} title={!hasCommits ? 'Create a commit before publishing this branch' : undefined} onClick={() => requestPush()}>{hasUpstream ? `↑ Push (${outgoingCommits})` : '↑ Publish branch'}</button>}
         {showBranchFromChanges && <button className="git-button" disabled={!directory || !changes.length || gitBusy} title={changes.length ? 'Create a branch carrying the current changes' : 'No changes to move to a new branch'} onClick={() => onBranchFromChanges()}>✦ Branch from changes</button>}
         {showTag &&<button className="git-button" disabled={!directory || gitBusy} onClick={() => onTagCommit()}>◇ Release tag</button>}
         {showCommit && <button className="git-button" disabled={!selected.size || aiBusy} onClick={() => generateCommitMessage()}>{aiBusy ? 'Generating…' : '✦ Commit'}</button>}
