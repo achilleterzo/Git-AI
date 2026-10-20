@@ -659,9 +659,9 @@ function gitCurrentBranch(directory) {
   return new Promise(resolve => execFile('git', ['-C', directory, 'branch', '--show-current'], { windowsHide: true, timeout: 10000 }, (error, stdout) => {
     const branch = !error ? stdout.trim() : ''
     if (branch) return resolve(branch)
-    execFile('git', ['-C', directory, 'rev-parse', '--abbrev-ref', 'HEAD'], { windowsHide: true, timeout: 10000 }, (fallbackError, fallbackStdout) => {
-      const fallbackBranch = !fallbackError ? fallbackStdout.trim() : ''
-      resolve(fallbackBranch && fallbackBranch !== 'HEAD' ? fallbackBranch : '')
+    // symbolic-ref also resolves an unborn HEAD, which rev-parse cannot.
+    execFile('git', ['-C', directory, 'symbolic-ref', '--short', '-q', 'HEAD'], { windowsHide: true, timeout: 10000 }, (fallbackError, fallbackStdout) => {
+      resolve(!fallbackError ? fallbackStdout.trim() : '')
     })
   }))
 }
@@ -975,48 +975,75 @@ ipcMain.handle('apply-project-plan', async (_, changes) => {
   await publish('ai-project-plan')
   return { applied: changes.length }
 })
-ipcMain.handle('add-gitignore-entry', async (_, { kind, value } = {}) => {
+// Git reports paths relative to the repository root, and a leading "/" in a
+// .gitignore pattern is anchored to that file, so the rules must live in the root
+// even when the opened folder is a subfolder of the repository.
+async function gitignoreTarget() {
   if (!currentDirectory) throw new Error('No Git repository selected')
+  const root = await ensureGitRepository(currentDirectory)
+  return { root, ignorePath: path.join(root, '.gitignore') }
+}
+// Tracked files stay in the index after being ignored, so they keep showing up as
+// modified. Report them so the user can choose to stop tracking them.
+async function trackedIgnoredFiles(root) {
+  const output = await runGit(root, ['ls-files', '-z', '--cached', '--ignored', '--exclude-standard']).catch(() => '')
+  return output.split('\0').filter(Boolean)
+}
+function appendIgnorePatterns(ignorePath, patterns) {
+  const existing = fs.existsSync(ignorePath) ? fs.readFileSync(ignorePath, 'utf8') : ''
+  const lines = existing.split(/\r?\n/).map(line => line.trim())
+  const additions = patterns.filter(pattern => !lines.includes(pattern))
+  if (additions.length) fs.writeFileSync(ignorePath, `${existing.trimEnd()}${existing.trimEnd() ? '\n' : ''}${additions.join('\n')}\n`, 'utf8')
+  return additions
+}
+function ignoreRelativePath(rawValue) {
+  const relative = String(rawValue || '').trim().replaceAll('\\', '/').replace(/^\/+/, '').replace(/\/+$/, '')
+  if (!relative || relative === '.' || relative.split('/').some(part => !part || part === '..') || path.isAbsolute(String(rawValue || '').trim())) throw new Error('Invalid ignore path')
+  return relative
+}
+ipcMain.handle('add-gitignore-entry', async (_, { kind, value } = {}) => {
+  const { root, ignorePath } = await gitignoreTarget()
   const entryKind = String(kind || '')
   const rawValue = String(value || '').trim()
   let pattern
   if (entryKind === 'extension') {
-    if (!/^\.[^/\\\s]+$/.test(rawValue)) throw new Error('Invalid file extension')
+    if (!/^\.[^/\\s]+$/.test(rawValue)) throw new Error('Invalid file extension')
     pattern = `*${rawValue}`
+  } else if (entryKind === 'folder-any') {
+    // No leading "/" and no inner slash: matches a folder with this name at every depth.
+    const name = ignoreRelativePath(rawValue).split('/').pop()
+    if (/[*?[\]!#]/.test(name)) throw new Error('Invalid folder name')
+    pattern = `${name}/`
   } else {
-    const relative = rawValue.replaceAll('\\', '/').replace(/^\/+/, '')
-    if (!relative || relative === '.' || relative.split('/').some(part => !part || part === '..') || path.isAbsolute(rawValue)) throw new Error('Invalid ignore path')
+    const relative = ignoreRelativePath(rawValue)
     pattern = `/${relative}${entryKind === 'folder' ? '/' : ''}`
   }
-  const ignorePath = path.join(currentDirectory, '.gitignore')
-  const existing = fs.existsSync(ignorePath) ? fs.readFileSync(ignorePath, 'utf8') : ''
-  const lines = existing.split(/\r?\n/)
-  if (!lines.some(line => line.trim() === pattern)) {
-    const next = `${existing.trimEnd()}${existing.trimEnd() ? '\n' : ''}${pattern}\n`
-    fs.writeFileSync(ignorePath, next, 'utf8')
-  }
+  const added = appendIgnorePatterns(ignorePath, [pattern]).length > 0
   sendOperationLog(`Added ${pattern} to .gitignore`)
   await publish('gitignore-update')
-  return { pattern, added: !lines.some(line => line.trim() === pattern) }
+  return { pattern, added, tracked: await trackedIgnoredFiles(root) }
 })
 ipcMain.handle('add-gitignore-selection', async (_, { entries } = {}) => {
-  if (!currentDirectory) throw new Error('No Git repository selected')
+  const { root, ignorePath } = await gitignoreTarget()
   const patterns = (Array.isArray(entries) ? entries : []).map(entry => {
     const kind = String(entry?.kind || '')
-    const rawValue = String(entry?.value || '').trim()
-    const relative = rawValue.replaceAll('\\', '/').replace(/^\/+/, '')
-    if (!['file', 'folder'].includes(kind) || !relative || relative === '.' || path.isAbsolute(rawValue) || relative.split('/').some(part => !part || part === '..')) throw new Error('Invalid ignore selection')
-    return `/${relative}${kind === 'folder' ? '/' : ''}`
+    if (!['file', 'folder'].includes(kind)) throw new Error('Invalid ignore selection')
+    return `/${ignoreRelativePath(entry?.value)}${kind === 'folder' ? '/' : ''}`
   }).filter((pattern, index, all) => all.indexOf(pattern) === index)
   if (!patterns.length) throw new Error('No files or folders selected')
-  const ignorePath = path.join(currentDirectory, '.gitignore')
-  const existing = fs.existsSync(ignorePath) ? fs.readFileSync(ignorePath, 'utf8') : ''
-  const lines = existing.split(/\r?\n/)
-  const additions = patterns.filter(pattern => !lines.some(line => line.trim() === pattern))
-  if (additions.length) fs.writeFileSync(ignorePath, `${existing.trimEnd()}${existing.trimEnd() ? '\n' : ''}${additions.join('\n')}\n`, 'utf8')
+  const additions = appendIgnorePatterns(ignorePath, patterns)
   sendOperationLog(`Added ${additions.length} selected ignore rule${additions.length === 1 ? '' : 's'} to .gitignore`)
   await publish('gitignore-update')
-  return { patterns, added: additions.length }
+  return { patterns, added: additions.length, tracked: await trackedIgnoredFiles(root) }
+})
+ipcMain.handle('untrack-ignored-files', async () => {
+  const { root } = await gitignoreTarget()
+  const files = await trackedIgnoredFiles(root)
+  // Chunked so a large folder cannot exceed the Windows command-line length limit.
+  for (let index = 0; index < files.length; index += 100) await runGit(root, ['rm', '--cached', '-q', '--', ...files.slice(index, index + 100)], 60000)
+  sendOperationLog(`Stopped tracking ${files.length} ignored file${files.length === 1 ? '' : 's'}`)
+  await publish('untrack-ignored')
+  return { untracked: files.length }
 })
 ipcMain.handle('generate-commit-message', async (_, { files, operation = 'commit' } = {}) => {
   if (!currentDirectory) throw new Error('No directory selected')
@@ -1395,16 +1422,18 @@ ipcMain.handle('refresh', async () => publish('post-commit'))
 async function runGitRemote(command) {
   if (!currentDirectory) throw new Error('No directory selected')
   sendOperationLog(`${command === 'pull' ? 'Pull' : 'Push'} started`)
-  let args = ['-C', currentDirectory, command, '--progress']
+  // Pull also prunes, so remote branches deleted upstream do not linger locally.
+  let args = ['-C', currentDirectory, command, '--progress', ...(command === 'pull' ? ['--prune'] : [])]
   if (command === 'pull' || command === 'push') {
     const branch = await gitCurrentBranch(currentDirectory)
     if (!branch) throw new Error(`Cannot ${command} while HEAD is detached`)
+    if (command === 'push' && !(await gitHasCommits(currentDirectory))) throw new Error('Create at least one commit before publishing')
     const hasUpstream = await runGit(currentDirectory, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']).then(() => true).catch(() => false)
     if (!hasUpstream) {
       sendOperationLog(`Linking ${branch} to origin/${branch}`)
       // Supplying the matching remote branch lets pull fetch and merge in one
       // operation, while --set-upstream persists the tracking relationship.
-      args = ['-C', currentDirectory, command, '--progress', '--set-upstream', 'origin', branch]
+      args = ['-C', currentDirectory, command, '--progress', ...(command === 'pull' ? ['--prune'] : []), '--set-upstream', 'origin', branch]
     }
   }
   let output
@@ -1526,7 +1555,28 @@ ipcMain.handle('get-branches', async () => {
   ])
   const local = localOutput.split(/\r?\n/).map(value => value.trim()).filter(Boolean)
   const remote = remoteOutput.split(/\r?\n/).map(line => line.split('\t')).filter(([short, full]) => short?.trim() && full && !full.endsWith('/HEAD')).map(([short]) => short.trim())
-  return { current: await gitCurrentBranch(currentDirectory), local, remote, remoteUrl: remoteUrl.trim() }
+  const [current, hasCommits, remoteHead] = await Promise.all([
+    gitCurrentBranch(currentDirectory),
+    gitHasCommits(currentDirectory),
+    runGit(currentDirectory, ['symbolic-ref', '-q', '--short', 'refs/remotes/origin/HEAD']).catch(() => ''),
+  ])
+  // An unborn branch (no commits yet) has no ref, but it is still the branch in use.
+  const unborn = Boolean(current) && !local.includes(current)
+  if (unborn) local.unshift(current)
+  return { current, local, remote, remoteUrl: remoteUrl.trim(), hasCommits, unborn, remoteDefaultBranch: remoteHead.trim().replace(/^origin\//, '') }
+})
+ipcMain.handle('rename-branch', async (_, { oldName, newName } = {}) => {
+  if (!currentDirectory) throw new Error('No directory selected')
+  const from = String(oldName || '').trim()
+  const to = String(newName || '').trim()
+  if (!from || !to) throw new Error('Enter the new branch name')
+  await runGit(currentDirectory, ['check-ref-format', '--branch', to]).catch(() => { throw new Error(`"${to}" is not a valid branch name`) })
+  const hadUpstream = await runGit(currentDirectory, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', `${from}@{u}`]).then(() => true).catch(() => false)
+  // `branch -m` also renames an unborn branch, which has no ref yet.
+  await runGit(currentDirectory, ['branch', '-m', from, to])
+  sendOperationLog(`Branch ${from} renamed to ${to}`)
+  await publish('rename-branch')
+  return { ok: true, remoteNotRenamed: hadUpstream }
 })
 ipcMain.handle('connect-remote', async (_, remoteUrl) => {
   if (!currentDirectory) throw new Error('No directory selected')
@@ -1539,6 +1589,13 @@ ipcMain.handle('connect-remote', async (_, remoteUrl) => {
   else await runGit(currentDirectory, ['remote', 'add', 'origin', url])
   await runGit(currentDirectory, ['remote', 'set-url', '--push', 'origin', url])
   sendOperationLog(`Remote origin connected: ${url}`)
+  // Best effort: an empty or unreachable remote must not fail the connection.
+  try {
+    await runGitStreaming(['-C', currentDirectory, 'fetch', '--prune', 'origin'])
+    await runGit(currentDirectory, ['remote', 'set-head', 'origin', '-a']).catch(() => {})
+  } catch (error) {
+    sendOperationLog(`Remote connected, but fetch failed: ${String(error?.message || error).split(/\r?\n/)[0]}`)
+  }
   return url
 })
 ipcMain.handle('switch-branch', async (_, { target, newBranch, base, remote = false, stash = false } = {}) => {

@@ -65,6 +65,7 @@ function App() {
   const [outgoingCommits, setOutgoingCommits] = useState(0)
   const [hasUpstream, setHasUpstream] = useState(false)
   const [hasCommits, setHasCommits] = useState(false)
+  const [refsVersion, setRefsVersion] = useState(0)
   const [currentBranch, setCurrentBranch] = useState('')
   const [gitLfs, setGitLfs] = useState(false)
   const [branchSwitchRequest, setBranchSwitchRequest] = useState(null)
@@ -115,6 +116,8 @@ function App() {
     setHasUpstream(Boolean(data.hasUpstream))
     setHasCommits(Boolean(data.hasCommits))
     setCurrentBranch(String(data.branch || '').trim())
+    // Fetches prune deleted remote branches, so branch lists must be read again.
+    if (['background-fetch', 'git-fetch', 'git-pull', 'git-push'].includes(data.reason)) setRefsVersion(value => value + 1)
     setGitLfs(Boolean(data.gitLfs))
     if (data.directory) setProjects(value => value.map(project => project.path === data.directory ? { ...project, gitLfs: Boolean(data.gitLfs), icon: data.projectIcon || project.icon } : project))
     if (data.reason === 'directory-removed') {
@@ -215,8 +218,11 @@ function App() {
   async function commitSelected(pushAfter = false) { const amend = pendingOperation === 'amend'; setAiBusy(true); setAiError(''); try { await runOperation(amend ? 'Amending commit…' : 'Creating commit…', () => window.directoryAPI.commitSelected([...selected], aiMessage, amend)); setAiMessage(''); setSelected(new Set()); setLastEvent(amend ? 'Commit amended' : 'Commit completed'); if (pushAfter) await runGitRemote('push', true) } catch (error) { setAiError(error.message) } finally { setAiBusy(false) } }
   async function commitPlanned(pushAfter = false) { setAiBusy(true); setAiError(''); try { const result = await runOperation('Executing planned commits…', () => window.directoryAPI.commitPlanned({ commits: plannedCommits })); if (result?.ok === false) { const completed = result.commits?.length || 0; setPlannedCommits(items => (items || []).slice(completed)); setExpandedPlannedCommit(null); const detail = `${completed} planned commit${completed === 1 ? '' : 's'} completed before the error. ${result.error || 'The remaining commits were not created.'}`; setAiError(detail); setLastEvent('Planned commits partially completed'); return } setAiMessage(''); setAiError(''); setPlannedCommits(null); setSelected(new Set()); setLastEvent('Planned commits completed'); if (pushAfter) await runGitRemote('push', true) } catch (error) { setAiError(error.message) } finally { setAiBusy(false) } }
   async function moveSelected(files) { setGitBusy(true); try { await runOperation('Preparing file move…', () => window.directoryAPI.moveSelected(files)); setSelected(new Set()); setLastEvent('File move prepared for commit') } catch (error) { setErrorModal(error.message) } finally { setGitBusy(false) } }
-  async function addGitignoreEntry(kind, value) { setGitBusy(true); try { const result = await runOperation('Updating .gitignore…', () => window.directoryAPI.addGitignoreEntry(kind, value)); setLastEvent(result?.added ? `Added ${result.pattern} to .gitignore` : `${result.pattern} is already in .gitignore`) } catch (error) { setErrorModal(String(error?.message || error)) } finally { setGitBusy(false) } }
-  async function addGitignoreSelection(entries) { setGitBusy(true); try { const result = await runOperation('Updating .gitignore…', () => window.directoryAPI.addGitignoreSelection(entries)); setLastEvent(`Added ${result?.added || 0} selected ignore rule${result?.added === 1 ? '' : 's'} to .gitignore`) } catch (error) { setErrorModal(String(error?.message || error)) } finally { setGitBusy(false) } }
+  async function offerUntrackIgnored(tracked) { if (!tracked?.length) return; if (!window.confirm(`${tracked.length} file${tracked.length === 1 ? ' is' : 's are'} already tracked by Git, so ${tracked.length === 1 ? 'it keeps' : 'they keep'} appearing despite the ignore rule.
+
+Stop tracking ${tracked.length === 1 ? 'it' : 'them'}? The files stay on disk and the removal is staged for your next commit.`)) return; const done = await runOperation('Untracking ignored files…', () => window.directoryAPI.untrackIgnoredFiles()); setLastEvent(`Stopped tracking ${done?.untracked || 0} ignored file${done?.untracked === 1 ? '' : 's'}`) }
+  async function addGitignoreEntry(kind, value) { setGitBusy(true); try { const result = await runOperation('Updating .gitignore…', () => window.directoryAPI.addGitignoreEntry(kind, value)); setLastEvent(result?.added ? `Added ${result.pattern} to .gitignore` : `${result.pattern} is already in .gitignore`); await offerUntrackIgnored(result?.tracked) } catch (error) { setErrorModal(String(error?.message || error)) } finally { setGitBusy(false) } }
+  async function addGitignoreSelection(entries) { setGitBusy(true); try { const result = await runOperation('Updating .gitignore…', () => window.directoryAPI.addGitignoreSelection(entries)); setLastEvent(`Added ${result?.added || 0} selected ignore rule${result?.added === 1 ? '' : 's'} to .gitignore`); await offerUntrackIgnored(result?.tracked) } catch (error) { setErrorModal(String(error?.message || error)) } finally { setGitBusy(false) } }
   async function stashSelected() { setAiBusy(true); setAiError(''); try { await runOperation('Creating stash…', () => window.directoryAPI.stashSelected([...selected], aiMessage)); setAiMessage(''); setSelected(new Set()); setLastEvent('Stash created'); setStashes(await window.directoryAPI.getStashes()) } catch (error) { setAiError(error.message); setErrorModal(error.message) } finally { setAiBusy(false) } }
   async function restoreStash({ partialRef = '', files = [] } = {}) { if (!selectedStashes.length && !(partialRef && files.length)) return; setGitBusy(true); try { await runOperation(files.length ? `Recovering ${files.length} stash file${files.length > 1 ? 's' : ''}…` : `Recovering ${selectedStashes.length} stash${selectedStashes.length > 1 ? 'es' : ''}…`, async () => { if (files.length && partialRef) await window.directoryAPI.unstashFiles(partialRef, files); else if (selectedStashes.length > 1) await window.directoryAPI.unstashMany(selectedStashes.map(stash => stash.ref)); else await window.directoryAPI.unstash(selectedStashes[0].ref) }); if (!files.length) setSelectedStashes([]); setStashes(await window.directoryAPI.getStashes()) } catch (error) { setErrorModal(error.message) } finally { setGitBusy(false) } }
   async function mergeStashes() { setAiBusy(true); setAiError(''); try { await runOperation('Merging stashes…', () => window.directoryAPI.mergeStashes(selectedStashes.map(stash => stash.ref), aiMessage)); setAiMessage(''); setSelectedStashes([]); setStashes(await window.directoryAPI.getStashes()) } catch (error) { setAiError(error.message); setErrorModal(error.message) } finally { setAiBusy(false) } }
@@ -291,7 +297,7 @@ function App() {
       changes: <ChangesPage {...pageProps} />,
       stash: <StashPage {...pageProps} stashes={stashes} />,
       history: <HistoryPage {...pageProps} runOperation={runOperation} setErrorModal={setErrorModal} />,
-      branches: <BranchesPage {...pageProps} runOperation={runOperation} setErrorModal={setErrorModal} />,
+      branches: <BranchesPage {...pageProps} refsVersion={refsVersion} runOperation={runOperation} setErrorModal={setErrorModal} />,
       lfs: <LfsPage {...pageProps} loading={loading} runOperation={runOperation} setErrorModal={setErrorModal} />,
     }
     return <><header className="page-header page-header-compact"><span className="eyebrow">WORKSPACE / MONITOR</span><WatchingPill active={active} starting={starting} indexing={fileIndexing.status === 'indexing'} directory={directory} stop={stop} resume={resume} /></header>{pages[view] || pages.changes}</>

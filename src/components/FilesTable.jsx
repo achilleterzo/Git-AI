@@ -78,7 +78,7 @@ function FilesTable({ changes, fileIndexing, query, onQueryChange, selected, exp
     })() : ''
     const selectionEntries = getSelectionIgnoreEntries()
     const selectedForIgnore = selectionEntries.length > 0
-    const menuHeight = 75 + (extension ? 40 : 0) + (selectedForIgnore ? 40 : 0)
+    const menuHeight = 75 + (item.type === 'folder' ? 40 : 0) + (extension ? 40 : 0) + (selectedForIgnore ? 40 : 0)
     setContextMenu({ x: Math.min(event.clientX, window.innerWidth - 250), y: Math.min(event.clientY, window.innerHeight - menuHeight), ...item, extension, selectedForIgnore, selectionEntries })
   }
 
@@ -204,7 +204,7 @@ function FilesTable({ changes, fileIndexing, query, onQueryChange, selected, exp
         </div>
       </div>
       {body}
-      {contextMenu && addGitignoreEntry && <div className="file-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={event => event.stopPropagation()}><button type="button" onClick={() => { setContextMenu(null); addGitignoreEntry(contextMenu.type, contextMenu.path) }}>Ignore this {contextMenu.type}</button>{contextMenu.extension && <button type="button" onClick={() => { setContextMenu(null); addGitignoreEntry('extension', contextMenu.extension) }}>Ignore {contextMenu.extension} files</button>}{contextMenu.selectedForIgnore && addGitignoreSelection && <button type="button" onClick={() => { setContextMenu(null); addGitignoreSelection(contextMenu.selectionEntries) }}>Ignore selected</button>}</div>}
+      {contextMenu && addGitignoreEntry && <div className="file-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={event => event.stopPropagation()}><button type="button" onClick={() => { setContextMenu(null); addGitignoreEntry(contextMenu.type, contextMenu.path) }}>Ignore this {contextMenu.type}</button>{contextMenu.type === 'folder' && <button type="button" onClick={() => { setContextMenu(null); addGitignoreEntry('folder-any', contextMenu.path) }}>Ignore every “{String(contextMenu.path).replaceAll('\\', '/').split('/').pop()}” folder</button>}{contextMenu.extension && <button type="button" onClick={() => { setContextMenu(null); addGitignoreEntry('extension', contextMenu.extension) }}>Ignore {contextMenu.extension} files</button>}{contextMenu.selectedForIgnore && addGitignoreSelection && <button type="button" onClick={() => { setContextMenu(null); addGitignoreSelection(contextMenu.selectionEntries) }}>Ignore selected</button>}</div>}
     </div>
   )
 }
