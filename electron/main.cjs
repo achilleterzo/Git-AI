@@ -1370,8 +1370,23 @@ ipcMain.handle('commit-selected', async (_, { files, message, amend = false }) =
   const commitMessage = String(message || '').trim()
   if (!selected.length) throw new Error('Select at least one file')
   if (!commitMessage) throw new Error('The commit message is empty')
+  // Ignore rules can change while the renderer still has an old selection.
+  // Stage only paths that Git currently reports as changes; ignored, untracked
+  // files are absent from this list and must never reach `git add`.
+  const changesByPath = new Map((await gitChanges(currentDirectory)).map(change => [change.file.replaceAll('\\', '/'), change]))
+  const stageable = [...new Set(selected.map(file => file.replaceAll('\\', '/')).filter(file => changesByPath.has(file)))]
+  if (!stageable.length) throw new Error('None of the selected files has a current Git change. Refresh the file list and select files again.')
   sendOperationLog('Staging selected changes…')
-  await runGitWithPathspec(currentDirectory, ['add'], selected, 30000)
+  const untracked = stageable.filter(file => changesByPath.get(file).code === '??')
+  // A leading D means the removal is already staged (for example by
+  // `git rm --cached`); its path is no longer in the index, so `git add -u`
+  // would reject it. Leave that staged deletion ready for the commit.
+  const tracked = stageable.filter(file => changesByPath.get(file).code !== '??' && changesByPath.get(file).code[0] !== 'D')
+  // `git add` rejects ignored working-tree files even when the intended change
+  // is the staged deletion from `git rm --cached`. Update tracked index entries
+  // separately so ignoring a tracked file does not try to re-add its contents.
+  if (tracked.length) await runGitWithPathspec(currentDirectory, ['add', '-u'], tracked, 30000)
+  if (untracked.length) await runGitWithPathspec(currentDirectory, ['add'], untracked, 30000)
   sendOperationLog(amend ? 'Amending commit…' : 'Creating commit…')
   const output = await new Promise((resolve, reject) => execFile('git', ['-C', currentDirectory, 'commit', ...(amend ? ['--amend'] : []), '-m', commitMessage], { windowsHide: true, timeout: 30000 }, (error, stdout, stderr) => error ? reject(new Error(stderr.trim() || error.message)) : resolve(stdout.trim())))
   // Refreshing Git status can still be expensive in a large repository. The
