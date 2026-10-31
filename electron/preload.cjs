@@ -33,6 +33,7 @@ contextBridge.exposeInMainWorld('directoryAPI', {
   getCommitFiles: (hash) => ipcRenderer.invoke('get-commit-files', hash),
   getCommitDiff: (hash, file) => ipcRenderer.invoke('get-commit-diff', { hash, file }),
   getPendingCommits: () => ipcRenderer.invoke('get-pending-commits'),
+  undoCommit: (hash) => ipcRenderer.invoke('undo-commit', String(hash || '')),
   amendCommitMessage: (message) => ipcRenderer.invoke('amend-commit-message', message),
   generateReleaseTag: () => ipcRenderer.invoke('generate-release-tag'),
   createTag: (options) => ipcRenderer.invoke('create-tag', options),

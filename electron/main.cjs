@@ -1204,15 +1204,48 @@ ipcMain.handle('get-commit-diff', async (_, { hash, file } = {}) => {
   if (!currentDirectory || !/^[0-9a-f]{7,64}$/i.test(String(hash || '')) || typeof file !== 'string' || !file || file.includes('..') || path.isAbsolute(file)) throw new Error('Invalid commit file')
   return runGit(currentDirectory, ['show', '--format=', '--find-renames', String(hash), '--', file])
 })
-ipcMain.handle('get-pending-commits', async () => {
+async function listPendingCommits() {
   if (!currentDirectory) return []
   let output = ''
   const hasUpstream = await runGit(currentDirectory, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']).then(() => true).catch(() => false)
   try {
     const revisionArgs = hasUpstream ? ['@{u}..HEAD'] : ['HEAD', '--not', '--remotes=origin']
-    output = await runGit(currentDirectory, ['log', ...revisionArgs, '--format=%H%x1f%h%x1f%an%x1f%ad%x1f%s', '--date=iso-strict'])
+    output = await runGit(currentDirectory, ['log', ...revisionArgs, '--format=%H%x1f%h%x1f%an%x1f%ad%x1f%s%x1f%P', '--date=iso-strict'])
   } catch { return [] }
-  return output.split(/\r?\n/).filter(Boolean).map(line => { const [hash, shortHash, author, date, message] = line.split('\x1f'); return { hash, shortHash, author, date, message } })
+  return output.split(/\r?\n/).filter(Boolean).map(line => { const [hash, shortHash, author, date, message, parents] = line.split('\x1f'); return { hash, shortHash, author, date, message, parents: parents ? parents.split(' ') : [] } })
+}
+ipcMain.handle('get-pending-commits', () => listPendingCommits())
+// Undoes one unpushed commit and keeps its changes staged in the working tree
+// (like `git reset --soft HEAD~1`, but for any commit in the unpushed list).
+ipcMain.handle('undo-commit', async (_, hash) => {
+  if (!currentDirectory) throw new Error('No directory selected')
+  if (!/^[0-9a-f]{7,64}$/i.test(String(hash || ''))) throw new Error('Invalid commit')
+  const pending = await listPendingCommits()
+  const index = pending.findIndex(commit => commit.hash === hash)
+  if (index < 0) throw new Error('Only commits that have not been pushed can be undone')
+  const commit = pending[index]
+  if (commit.parents.length > 1) throw new Error('Merge commits cannot be undone this way')
+  if (index === 0) {
+    if (commit.parents.length) await runGit(currentDirectory, ['reset', '--soft', 'HEAD~1'])
+    else await runGit(currentDirectory, ['update-ref', '-d', 'HEAD'])
+  } else {
+    if (pending.slice(0, index).some(item => item.parents.length > 1)) throw new Error('Cannot undo a commit that is followed by a merge commit')
+    if ((await gitChanges(currentDirectory)).length) throw new Error('Commit, stash or revert your working changes before undoing an older commit')
+    const originalHead = await runGit(currentDirectory, ['rev-parse', 'HEAD'])
+    try {
+      // Drop the commit from history, then bring its changes back as staged edits.
+      await runGit(currentDirectory, ['rebase', '--onto', `${hash}^`, hash])
+      await runGit(currentDirectory, ['cherry-pick', '-n', hash])
+    } catch (error) {
+      await runGit(currentDirectory, ['rebase', '--abort']).catch(() => {})
+      await runGit(currentDirectory, ['cherry-pick', '--abort']).catch(() => {})
+      await runGit(currentDirectory, ['reset', '--hard', originalHead]).catch(() => {})
+      throw new Error(`Could not undo this commit because later commits depend on it. Nothing was changed.\n${error.message}`)
+    }
+  }
+  sendOperationLog(`Undid commit ${commit.shortHash}: ${commit.message}`)
+  await publish('undo-commit')
+  return { ok: true }
 })
 ipcMain.handle('amend-commit-message', async (_, message) => {
   if (!currentDirectory) throw new Error('No directory selected')
@@ -1834,12 +1867,16 @@ ipcMain.handle('set-lfs-enabled', async (_, { directory, enabled } = {}) => {
 })
 ipcMain.handle('revert-files', async (_, files) => {
   if (!currentDirectory) throw new Error('No directory selected')
-  const selected = Array.isArray(files) ? files.filter(file => typeof file === 'string' && file && !file.includes('..')) : []
+  const selected = Array.isArray(files) ? files.filter(file => typeof file === 'string' && file && !file.includes('..') && !path.isAbsolute(file)) : []
   if (!selected.length) throw new Error('Select at least one file')
-  await runGit(currentDirectory, ['restore', '--source=HEAD', '--staged', '--worktree', '--', ...selected], 60000).catch(async error => {
-    if (!/pathspec|did not match any file/i.test(error.message)) throw error
-  })
-  await runGit(currentDirectory, ['clean', '-f', '--', ...selected], 60000).catch(() => {})
+  const split = output => output.split('\0').filter(Boolean)
+  // Paths may be files or folders: restore what HEAD knows, unstage files that were
+  // only ever added, then remove whatever is still untracked.
+  const inHead = split(await runGit(currentDirectory, ['ls-tree', '-r', '-z', '--name-only', 'HEAD', '--', ...selected]).catch(() => ''))
+  if (inHead.length) await runGit(currentDirectory, ['restore', '--source=HEAD', '--staged', '--worktree', '--', ...inHead], 60000)
+  const added = split(await runGit(currentDirectory, ['diff', '--cached', '-z', '--name-only', '--diff-filter=A', '--', ...selected]).catch(() => ''))
+  if (added.length) await runGit(currentDirectory, ['rm', '-f', '--cached', '-q', '--', ...added], 60000)
+  await runGit(currentDirectory, ['clean', '-fd', '--', ...selected], 60000).catch(() => {})
   await publish('revert-files')
   return { ok: true }
 })
