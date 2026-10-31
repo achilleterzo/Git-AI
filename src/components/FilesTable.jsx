@@ -36,7 +36,7 @@ function SelectionBox({ checked, indeterminate, onChange }) {
   return <button type="button" className={`selection-switch ${checked ? 'enabled' : ''} ${indeterminate ? 'indeterminate' : ''}`} role="switch" aria-checked={indeterminate ? 'mixed' : checked} aria-label={checked ? 'Deselect' : 'Select'} onClick={event => { event.stopPropagation(); onChange() }}><span /></button>
 }
 
-function FilesTable({ changes, fileIndexing, query, onQueryChange, selected, expanded, toggleFolder, toggleSelection, expandAllFolders, collapseAllFolders, openDiff, addGitignoreEntry, addGitignoreSelection, variant = 'changes', title = 'Changes to commit', emptyMessage = 'No added, deleted, or modified files to commit.', outgoingCommits = 0, hasUpstream = true, gitBusy, runGitRemote, compact = false, readOnly = false }) {
+function FilesTable({ changes, fileIndexing, query, onQueryChange, selected, expanded, toggleFolder, toggleSelection, expandAllFolders, collapseAllFolders, openDiff, addGitignoreEntry, addGitignoreSelection, requestDiscard, variant = 'changes', title = 'Changes to commit', emptyMessage = 'No added, deleted, or modified files to commit.', outgoingCommits = 0, hasUpstream = true, gitBusy, runGitRemote, compact = false, readOnly = false }) {
   const tree = useMemo(() => buildTree(changes), [changes])
   const [hiddenStatuses, setHiddenStatuses] = useState(() => new Set())
   const [contextMenu, setContextMenu] = useState(null)
@@ -78,7 +78,7 @@ function FilesTable({ changes, fileIndexing, query, onQueryChange, selected, exp
     })() : ''
     const selectionEntries = getSelectionIgnoreEntries()
     const selectedForIgnore = selectionEntries.length > 0
-    const menuHeight = 75 + (item.type === 'folder' ? 40 : 0) + (extension ? 40 : 0) + (selectedForIgnore ? 40 : 0)
+    const menuHeight = 75 + (requestDiscard ? 80 : 0) + (item.type === 'folder' ? 40 : 0) + (extension ? 40 : 0) + (selectedForIgnore ? 40 : 0)
     setContextMenu({ x: Math.min(event.clientX, window.innerWidth - 250), y: Math.min(event.clientY, window.innerHeight - menuHeight), ...item, extension, selectedForIgnore, selectionEntries })
   }
 
@@ -204,7 +204,7 @@ function FilesTable({ changes, fileIndexing, query, onQueryChange, selected, exp
         </div>
       </div>
       {body}
-      {contextMenu && addGitignoreEntry && <div className="file-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={event => event.stopPropagation()}><button type="button" onClick={() => { setContextMenu(null); addGitignoreEntry(contextMenu.type, contextMenu.path) }}>Ignore this {contextMenu.type}</button>{contextMenu.type === 'folder' && <button type="button" onClick={() => { setContextMenu(null); addGitignoreEntry('folder-any', contextMenu.path) }}>Ignore every “{String(contextMenu.path).replaceAll('\\', '/').split('/').pop()}” folder</button>}{contextMenu.extension && <button type="button" onClick={() => { setContextMenu(null); addGitignoreEntry('extension', contextMenu.extension) }}>Ignore {contextMenu.extension} files</button>}{contextMenu.selectedForIgnore && addGitignoreSelection && <button type="button" onClick={() => { setContextMenu(null); addGitignoreSelection(contextMenu.selectionEntries) }}>Ignore selected</button>}</div>}
+      {contextMenu && addGitignoreEntry && <div className="file-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={event => event.stopPropagation()}>{requestDiscard && <><button type="button" className="danger-item" onClick={() => { setContextMenu(null); requestDiscard(contextMenu.type === 'folder' ? contextMenu.selectedPaths : [contextMenu.path]) }}>Discard changes in this {contextMenu.type}</button>{selected.size > 0 && <button type="button" className="danger-item" onClick={() => { setContextMenu(null); requestDiscard([...selected]) }}>Discard selected ({selected.size})</button>}<div className="menu-separator" /></>}<button type="button" onClick={() => { setContextMenu(null); addGitignoreEntry(contextMenu.type, contextMenu.path) }}>Ignore this {contextMenu.type}</button>{contextMenu.type === 'folder' && <button type="button" onClick={() => { setContextMenu(null); addGitignoreEntry('folder-any', contextMenu.path) }}>Ignore every “{String(contextMenu.path).replaceAll('\\', '/').split('/').pop()}” folder</button>}{contextMenu.extension && <button type="button" onClick={() => { setContextMenu(null); addGitignoreEntry('extension', contextMenu.extension) }}>Ignore {contextMenu.extension} files</button>}{contextMenu.selectedForIgnore && addGitignoreSelection && <button type="button" onClick={() => { setContextMenu(null); addGitignoreSelection(contextMenu.selectionEntries) }}>Ignore selected</button>}</div>}
     </div>
   )
 }
@@ -212,6 +212,6 @@ function FilesTable({ changes, fileIndexing, query, onQueryChange, selected, exp
 // Operation state (loading/AI activity) changes at the App level, but it does
 // not change this tree. Avoid rebuilding thousands of rows for every spinner
 // tick or modal update in a large repository.
-const sameFilesTableState = (previous, next) => previous.changes === next.changes && previous.selected === next.selected && previous.expanded === next.expanded && previous.query === next.query && previous.variant === next.variant && previous.title === next.title && previous.emptyMessage === next.emptyMessage && previous.outgoingCommits === next.outgoingCommits && previous.hasUpstream === next.hasUpstream && previous.gitBusy === next.gitBusy && previous.compact === next.compact && previous.readOnly === next.readOnly && previous.fileIndexing?.status === next.fileIndexing?.status && previous.fileIndexing?.error === next.fileIndexing?.error
+const sameFilesTableState = (previous, next) => previous.changes === next.changes && previous.selected === next.selected && previous.requestDiscard === next.requestDiscard && previous.expanded === next.expanded && previous.query === next.query && previous.variant === next.variant && previous.title === next.title && previous.emptyMessage === next.emptyMessage && previous.outgoingCommits === next.outgoingCommits && previous.hasUpstream === next.hasUpstream && previous.gitBusy === next.gitBusy && previous.compact === next.compact && previous.readOnly === next.readOnly && previous.fileIndexing?.status === next.fileIndexing?.status && previous.fileIndexing?.error === next.fileIndexing?.error
 
 export default React.memo(FilesTable, sameFilesTableState)
