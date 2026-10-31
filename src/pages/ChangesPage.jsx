@@ -24,8 +24,8 @@ export default function ChangesPage({ directory, projects, choose, selectProject
       )}
       <ProjectToolbar {...{ directory, projects, choose, selectProject, removeProjectOption, active, stop, resume, defaultPathIcon }} />
       <RepositoryActionsBar {...{ directory, currentBranch, gitLfs, onBranchSwitch, incomingCommits, outgoingCommits, hasUpstream, hasCommits, selected, changes, aiBusy, gitBusy, generateCommitMessage, moveSelected, runGitRemote, requestPush, requestRevert }} showPull showPush showCommit showMove showAmend={hasCommits} showStash showRevert />
-      <FilesTable {...{ changes, fileIndexing, query, selected, expanded, toggleFolder, toggleSelection, expandAllFolders, collapseAllFolders, openDiff, addGitignoreEntry, addGitignoreSelection, requestDiscard, outgoingCommits, hasUpstream, gitBusy, runGitRemote }} onQueryChange={setQuery} />
       <CommittedChanges {...{ directory, outgoingCommits, changes, commitsVersion, gitBusy, requestUndoCommit }} />
+      <FilesTable {...{ changes, fileIndexing, query, selected, expanded, toggleFolder, toggleSelection, expandAllFolders, collapseAllFolders, openDiff, addGitignoreEntry, addGitignoreSelection, requestDiscard, outgoingCommits, hasUpstream, gitBusy, runGitRemote }} onQueryChange={setQuery} />
     </div>
   )
 }
