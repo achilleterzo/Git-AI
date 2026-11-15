@@ -544,8 +544,29 @@ function gitChanges(directory) {
       }
       changes.push({ file, code, status: code === '??' || code.includes('A') ? 'Added' : code.includes('D') ? 'Deleted' : 'Modified' })
     }
-    resolve(changes)
+    resolve(dropPhantomChanges(directory, changes))
   }))
+}
+// A path that is in the index but neither in HEAD nor on disk (for example a file
+// added with `git add` or `git add -N` and then deleted) is not a change anyone can
+// commit: Git reports it as Deleted/Added, and staging it would record a deletion
+// of something that never existed. Clear the stale index entry and hide it.
+async function dropPhantomChanges(directory, changes) {
+  const candidates = changes.filter(change => change.code === ' D' || change.code === 'AD')
+  if (!candidates.length) return changes
+  try {
+    const inHead = new Set()
+    for (let start = 0; start < candidates.length; start += 200) {
+      const chunk = candidates.slice(start, start + 200).map(change => change.file)
+      const output = await runGit(directory, ['ls-tree', '-r', '-z', '--name-only', 'HEAD', '--', ...chunk]).catch(() => '')
+      output.split(' ').filter(Boolean).forEach(file => inHead.add(file))
+    }
+    const phantoms = candidates.filter(change => !inHead.has(change.file))
+    if (!phantoms.length) return changes
+    await runGitWithPathspec(directory, ['rm', '--cached', '-q', '-f', '--ignore-unmatch'], phantoms.map(change => change.file), 30000)
+    const dropped = new Set(phantoms.map(change => change.file))
+    return changes.filter(change => !dropped.has(change.file))
+  } catch { return changes }
 }
 function ensureGitRepository(directory) {
   return new Promise((resolve, reject) => execFile('git', ['-C', directory, 'rev-parse', '--show-toplevel'], { windowsHide: true, timeout: 5000, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
@@ -1335,6 +1356,33 @@ ipcMain.handle('delete-tag', async (_, name) => {
   const tagName = String(name || '').trim()
   if (!tagName || !/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(tagName) || tagName.includes('..')) throw new Error('Invalid tag name')
   await runGit(currentDirectory, ['tag', '-d', tagName])
+  return { ok: true }
+})
+ipcMain.handle('list-tags', async () => {
+  if (!currentDirectory) return []
+  const output = await runGit(currentDirectory, ['tag', '--sort=-creatordate']).catch(() => '')
+  return output.split(/\r?\n/).filter(Boolean)
+})
+// Moves an existing tag to another commit (git tag -f) and optionally force-pushes it.
+ipcMain.handle('move-tag', async (_, { name, commit, push = false } = {}) => {
+  if (!currentDirectory) throw new Error('No directory selected')
+  const tagName = String(name || '').trim()
+  const target = String(commit || '').trim()
+  if (!tagName || !/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(tagName) || tagName.includes('..')) throw new Error('Invalid tag name')
+  if (!target || (target !== 'HEAD' && !/^[0-9a-f]{7,40}$/i.test(target))) throw new Error('Invalid commit')
+  await runGit(currentDirectory, ['rev-parse', '-q', '--verify', `refs/tags/${tagName}`]).catch(() => { throw new Error(`Tag ${tagName} does not exist`) })
+  // Keep annotated tags annotated, with their original message.
+  const kind = await runGit(currentDirectory, ['cat-file', '-t', `refs/tags/${tagName}`])
+  if (kind === 'tag') {
+    const message = await runGit(currentDirectory, ['tag', '-l', '--format=%(contents)', tagName])
+    await runGit(currentDirectory, ['tag', '-a', '-f', tagName, target, '-m', message || tagName])
+  } else await runGit(currentDirectory, ['tag', '-f', tagName, target])
+  sendOperationLog(`Moved tag ${tagName} to ${target}`)
+  if (push) {
+    sendOperationLog(`Force-pushing tag ${tagName} started`)
+    await runGitStreaming(['-C', currentDirectory, 'push', '--force', 'origin', `refs/tags/${tagName}`])
+    sendOperationLog(`Force-pushing tag ${tagName} completed`)
+  }
   return { ok: true }
 })
 ipcMain.handle('push-tag', async (_, name) => {

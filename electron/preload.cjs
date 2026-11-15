@@ -39,6 +39,8 @@ contextBridge.exposeInMainWorld('directoryAPI', {
   createTag: (options) => ipcRenderer.invoke('create-tag', options),
   deleteTag: (name) => ipcRenderer.invoke('delete-tag', name),
   pushTag: (name) => ipcRenderer.invoke('push-tag', name),
+  listTags: () => ipcRenderer.invoke('list-tags'),
+  moveTag: (options) => ipcRenderer.invoke('move-tag', options),
   stashSelected: (files, message) => ipcRenderer.invoke('stash-selected', { files, message }),
   openInExplorer: () => ipcRenderer.invoke('open-in-explorer'),
   commitSelected: (files, message, amend = false) => ipcRenderer.invoke('commit-selected', { files: Array.isArray(files) ? files.map(file => String(file)) : [], message: String(message || ''), amend: Boolean(amend) }),
